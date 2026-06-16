@@ -1,11 +1,24 @@
 import React, { useEffect, useState } from '@rbxts/react';
-import { Workspace } from '@rbxts/services';
+import { UserInputService, Workspace } from '@rbxts/services';
 import { KeyboardHints } from 'components/KeyboardHints';
 import { PrefabCard } from 'components/PrefabCard';
-import type { LoadedPrefab } from 'services/PrefabService';
-import { Input } from 'ui/components/Input';
-import { ScrollArea } from 'ui/components/ScrollArea';
-import { UITheme } from 'ui/theme';
+import { UITheme } from 'components/theme';
+import { Input } from 'components/ui/Input';
+import { ScrollArea } from 'components/ui/ScrollArea';
+import { PlacementMode, PlacementSystem } from 'PlacementSystem';
+import type { LoadedPrefab } from 'PrefabService';
+import { EmptyState } from './ui/EmptyState';
+
+function findPrefabAncestor(instance: Instance): Model | undefined {
+	let current = instance.Parent;
+
+	while (current !== undefined && current !== Workspace) {
+		if (current.IsA('Model') && current.GetAttribute('PrefabID')) return current;
+		current = current.Parent;
+	}
+
+	return undefined;
+}
 
 export function PrefabLibrary({
 	mouse,
@@ -26,29 +39,105 @@ export function PrefabLibrary({
 	const [selectedModel, setSelectedModel] = useState<Model | undefined>();
 	const [prefabName, setPrefabName] = useState('');
 	const [isSelectingModel, setIsSelectingModel] = useState(false);
+	const [isContinuing, setIsContinuing] = useState(false);
 
 	useEffect(() => {
-		if (!isSelectingModel || !isCreatingPrefab) return;
+		if (!isContinuing) {
+			PlacementSystem.setSelectionModeActive(false);
+			PlacementSystem.clearHighlight();
+			return;
+		}
 
-		let lastCheck = 0;
-		const THROTTLE_MS = 0.1; // ~10 checks per second instead of 60
+		PlacementSystem.setSelectionModeActive(true);
 
 		const mouseConnection = mouse.Move.Connect(() => {
-			const now = os.clock();
-			if (now - lastCheck < THROTTLE_MS) return;
-			lastCheck = now;
-
 			const target = mouse.Target;
 			if (target) {
-				const model = target.FindFirstAncestorWhichIsA('Model');
-				if (model && model !== Workspace) {
-					setSelectedModel(model as Model);
+				const model = findPrefabAncestor(target);
+				if (model && model !== Workspace && PlacementSystem.canContinueFrom(model))
+					PlacementSystem.highlightModel(model);
+				else PlacementSystem.clearHighlight();
+			} else PlacementSystem.clearHighlight();
+		});
+
+		const inputConnection = UserInputService.InputBegan.Connect((input, gameProcessed) => {
+			if (gameProcessed) return;
+
+			if (input.UserInputType === Enum.UserInputType.Keyboard && input.KeyCode === Enum.KeyCode.Escape) {
+				setIsContinuing(false);
+				return;
+			}
+
+			if (input.UserInputType !== Enum.UserInputType.MouseButton1) return;
+
+			const target = mouse.Target;
+
+			if (target) {
+				const model = findPrefabAncestor(target);
+
+				if (model && model !== Workspace && PlacementSystem.canContinueFrom(model)) {
+					const success = PlacementSystem.continueFromModel(model);
+					if (success) {
+						setIsContinuing(false);
+						PlacementSystem.setPlacementMode(PlacementMode.Array);
+						PlacementSystem.continueAsArrayAnchor(model);
+
+						const selectedPrefab = PlacementSystem.getSelectedPrefab();
+						if (selectedPrefab) onSelectPrefab(selectedPrefab);
+					}
 				}
 			}
 		});
 
 		return () => {
 			mouseConnection.Disconnect();
+			inputConnection.Disconnect();
+			PlacementSystem.setSelectionModeActive(false);
+			PlacementSystem.clearHighlight();
+		};
+	}, [isContinuing]);
+
+	useEffect(() => {
+		if (!isSelectingModel || !isCreatingPrefab) {
+			PlacementSystem.clearHighlight();
+			return;
+		}
+
+		const mouseConnection = mouse.Move.Connect(() => {
+			const target = mouse.Target;
+			if (target) {
+				const model = findPrefabAncestor(target);
+				if (model && model !== Workspace && PlacementSystem.canContinueFrom(model))
+					PlacementSystem.highlightModel(model);
+				else PlacementSystem.clearHighlight();
+			} else PlacementSystem.clearHighlight();
+		});
+
+		const inputConnection = UserInputService.InputBegan.Connect((input, gameProcessed) => {
+			if (gameProcessed) return;
+
+			if (input.UserInputType === Enum.UserInputType.Keyboard && input.KeyCode === Enum.KeyCode.Escape) {
+				setIsSelectingModel(false);
+				return;
+			}
+
+			if (input.UserInputType !== Enum.UserInputType.MouseButton1) return;
+
+			const target = mouse.Target;
+			if (target) {
+				const model = findPrefabAncestor(target);
+
+				if (model && model !== Workspace) {
+					setSelectedModel(model);
+					setIsSelectingModel(false);
+				}
+			}
+		});
+
+		return () => {
+			mouseConnection.Disconnect();
+			inputConnection.Disconnect();
+			PlacementSystem.clearHighlight();
 		};
 	}, [isSelectingModel, isCreatingPrefab]);
 
@@ -68,16 +157,8 @@ export function PrefabLibrary({
 	};
 
 	const handleConfirmModel = () => {
-		if (!selectedModel) {
-			warn('Please select a model first');
-			return;
-		}
-
-		if (prefabName === '') {
-			warn('Please enter a prefab name');
-			return;
-		}
-
+		if (!selectedModel) return warn('Please select a model first');
+		if (prefabName === '') return warn('Please enter a prefab name');
 		onCreatePrefab(selectedModel, prefabName);
 	};
 
@@ -129,18 +210,36 @@ export function PrefabLibrary({
 					Placeholder='Search prefabs...'
 					Value={searchQuery}
 					onChange={setSearchQuery}
-					Size={new UDim2(1, -100, 1, 0)}
+					Size={new UDim2(1, -135, 1, 0)}
 				/>
 
 				<textbutton
-					Size={new UDim2(0, 80, 1, 0)}
+					Size={new UDim2(0, 70, 1, 0)}
+					BackgroundColor3={UITheme.colors.accent}
+					BackgroundTransparency={0}
+					BorderSizePixel={0}
+					Font={Enum.Font.Unknown}
+					FontFace={UITheme.fonts.regular}
+					Text={isContinuing ? 'Click model...' : 'Continue'}
+					TextColor3={UITheme.colors.text}
+					TextSize={12}
+					LayoutOrder={2}
+					Event={{
+						Activated: () => setIsContinuing(true),
+					}}
+				>
+					<uicorner CornerRadius={new UDim(0, 4)} />
+				</textbutton>
+
+				<textbutton
+					Size={new UDim2(0, 50, 1, 0)}
 					BackgroundColor3={UITheme.colors.accent}
 					BackgroundTransparency={0}
 					BorderSizePixel={0}
 					Font={Enum.Font.Unknown}
 					FontFace={UITheme.fonts.regular}
 					Text='+ Add'
-					TextColor3={Color3.fromRGB(255, 255, 255)}
+					TextColor3={UITheme.colors.text}
 					TextSize={12}
 					LayoutOrder={1}
 					Event={{
@@ -220,16 +319,13 @@ export function PrefabLibrary({
 						Font={Enum.Font.Unknown}
 						FontFace={UITheme.fonts.regular}
 						Text={isSelectingModel ? 'Cancel Selection' : 'Select Model'}
-						TextColor3={Color3.fromRGB(255, 255, 255)}
+						TextColor3={UITheme.colors.text}
 						TextSize={12}
 						LayoutOrder={3}
 						Event={{
 							Activated: () => {
-								if (isSelectingModel) {
-									setIsSelectingModel(false);
-								} else {
-									handleStartModelSelection();
-								}
+								if (isSelectingModel) setIsSelectingModel(false);
+								else handleStartModelSelection();
 							},
 						}}
 					>
@@ -265,7 +361,7 @@ export function PrefabLibrary({
 							Font={Enum.Font.Unknown}
 							FontFace={UITheme.fonts.regular}
 							Text='Cancel'
-							TextColor3={Color3.fromRGB(255, 255, 255)}
+							TextColor3={UITheme.colors.text}
 							TextSize={12}
 							LayoutOrder={0}
 							Event={{
@@ -285,7 +381,7 @@ export function PrefabLibrary({
 							Font={Enum.Font.Unknown}
 							FontFace={UITheme.fonts.regular}
 							Text='Create'
-							TextColor3={Color3.fromRGB(255, 255, 255)}
+							TextColor3={UITheme.colors.text}
 							TextSize={12}
 							LayoutOrder={1}
 							Event={{
@@ -331,16 +427,10 @@ export function PrefabLibrary({
 							))}
 
 							{filteredPrefabs.size() === 0 && (
-								<textlabel
-									Size={new UDim2(1, 0, 0, 100)}
-									BackgroundTransparency={1}
-									Font={Enum.Font.Unknown}
-									FontFace={UITheme.fonts.regular}
-									Text='No prefabs found'
-									TextColor3={UITheme.colors.textMuted}
-									TextSize={14}
-									TextXAlignment={Enum.TextXAlignment.Center}
-									TextYAlignment={Enum.TextYAlignment.Center}
+								<EmptyState
+									Icon='search'
+									Title='No Prefabs Found'
+									Description='Press the "+ Add" button to get started, or add a Model to a folder named "Prefabs" in ServerStorage.'
 								/>
 							)}
 						</frame>

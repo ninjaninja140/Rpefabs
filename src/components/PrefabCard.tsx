@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from '@rbxts/react';
-import type { LoadedPrefab } from 'services/PrefabService';
-import { Tooltip } from 'ui/components/Tooltip';
-import { UITheme } from 'ui/theme';
+import { RunService } from '@rbxts/services';
+import { UITheme } from 'components/theme';
+import { Tooltip } from 'components/ui/Tooltip';
+import type { LoadedPrefab } from 'PrefabService';
 
 export function PrefabCard({
 	prefab,
@@ -13,45 +14,61 @@ export function PrefabCard({
 	LayoutOrder?: number;
 }) {
 	const viewportRef = useRef<ViewportFrame>(undefined);
+	const modelRef = useRef<Model | undefined>(undefined);
+	const cameraRef = useRef<Camera | undefined>(undefined);
+	const rotationRef = useRef(0);
 
 	useEffect(() => {
 		if (!viewportRef.current) return;
 
 		const viewport = viewportRef.current;
 
-		// Clear existing children but reuse camera if it exists
+		// Setup camera once
 		let camera = viewport.CurrentCamera;
 		if (!camera) {
 			camera = new Instance('Camera');
 			camera.Parent = viewport;
 			viewport.CurrentCamera = camera;
 		}
+		cameraRef.current = camera;
 
-		// Clear only model children (not the camera)
-		for (const child of viewport.GetChildren()) {
-			if (child !== camera) child.Destroy();
-		}
-
-		// Clone the prefab model
+		// Clone model once
 		const modelClone = prefab.model.Clone();
 		modelClone.Parent = viewport;
+		modelRef.current = modelClone;
 
 		const [modelCFrame, size] = modelClone.GetBoundingBox();
-
 		const maxDim = math.max(size.X, size.Y, size.Z);
 		const distance = maxDim * 1.5;
-		const cameraPos = modelCFrame.mul(new CFrame(distance, distance * 0.5, distance));
-		camera.CFrame = CFrame.lookAt(cameraPos.Position, modelCFrame.Position);
+		const center = modelCFrame.Position;
+
+		// Orbit camera around the model
+		const renderConn = RunService.RenderStepped.Connect((dt) => {
+			if (!cameraRef.current || !modelRef.current?.Parent) return;
+
+			// Smooth rotation — ~30° per second
+			rotationRef.current = (rotationRef.current + dt * 0.5) % (math.pi * 2);
+
+			const angle = rotationRef.current;
+			const x = math.cos(angle) * distance;
+			const z = math.sin(angle) * distance;
+			const y = distance * 0.4;
+
+			const cameraPos = new Vector3(center.X + x, center.Y + y, center.Z + z);
+			cameraRef.current.CFrame = CFrame.lookAt(cameraPos, center);
+		});
 
 		return () => {
+			renderConn.Disconnect();
 			modelClone.Destroy();
-			// Keep camera for reuse
+			modelRef.current = undefined;
 		};
 	}, [prefab]);
 
 	return (
 		<Tooltip
 			Content={prefab.tooltip}
+			Side='bottom'
 			DelayMs={300}
 			Children={
 				<textbutton
@@ -69,7 +86,6 @@ export function PrefabCard({
 					<uicorner CornerRadius={UITheme.radius.md} />
 					<uistroke Color={UITheme.colors.stroke} Transparency={0.3} Thickness={2} />
 
-					{/* Viewport for 3D preview */}
 					<frame Size={new UDim2(1, 0, 0.7, 0)} BackgroundTransparency={1} BorderSizePixel={0}>
 						<uicorner CornerRadius={UITheme.radius.md} />
 						<viewportframe
@@ -80,7 +96,6 @@ export function PrefabCard({
 						/>
 					</frame>
 
-					{/* Name label */}
 					<textlabel
 						Size={new UDim2(1, 0, 0.2, 0)}
 						Position={new UDim2(0, 0, 0.7, 0)}

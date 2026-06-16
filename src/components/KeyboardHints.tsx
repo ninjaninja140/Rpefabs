@@ -1,5 +1,5 @@
-import React from "@rbxts/react";
-import { UITheme } from "ui/theme";
+import React from '@rbxts/react';
+import { UITheme } from 'components/theme';
 
 export function KeyboardHints() {
 	return (
@@ -29,7 +29,7 @@ export function KeyboardHints() {
 				BackgroundTransparency={1}
 				Font={Enum.Font.Unknown}
 				FontFace={UITheme.fonts.semiBold}
-				Text="Keyboard Shortcuts:"
+				Text='Keyboard Shortcuts:'
 				TextColor3={UITheme.colors.text}
 				TextSize={12}
 				TextXAlignment={Enum.TextXAlignment.Left}
@@ -40,7 +40,7 @@ export function KeyboardHints() {
 				BackgroundTransparency={1}
 				Font={Enum.Font.Unknown}
 				FontFace={UITheme.fonts.regular}
-				Text="ESC - Cancel placement"
+				Text='ESC - Cancel placement'
 				TextColor3={UITheme.colors.textMuted}
 				TextSize={11}
 				TextXAlignment={Enum.TextXAlignment.Left}
@@ -51,7 +51,7 @@ export function KeyboardHints() {
 				BackgroundTransparency={1}
 				Font={Enum.Font.Unknown}
 				FontFace={UITheme.fonts.regular}
-				Text="Ctrl+Z - Undo last placement"
+				Text='Ctrl+Z - Undo last placement'
 				TextColor3={UITheme.colors.textMuted}
 				TextSize={11}
 				TextXAlignment={Enum.TextXAlignment.Left}
@@ -62,7 +62,7 @@ export function KeyboardHints() {
 				BackgroundTransparency={1}
 				Font={Enum.Font.Unknown}
 				FontFace={UITheme.fonts.regular}
-				Text="Click to place prefab at mouse position"
+				Text='Click to place prefab at mouse position'
 				TextColor3={UITheme.colors.textMuted}
 				TextSize={11}
 				TextXAlignment={Enum.TextXAlignment.Left}

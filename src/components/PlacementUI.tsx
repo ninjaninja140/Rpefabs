@@ -1,510 +1,35 @@
 import React, { useEffect, useRef, useState } from '@rbxts/react';
 import { RunService, UserInputService, Workspace } from '@rbxts/services';
-import {
-	type ArcAxis,
-	type ArcConfig,
-	type ArcRotationType,
-	PlacementMode,
-	PlacementPivot,
-	PlacementSystem,
-	SnapMode,
-} from 'services/PlacementSystem';
-import type { LoadedPrefab } from 'services/PrefabService';
-import { UITheme } from 'ui/theme';
+import { ArcPanel } from 'components/ArcPanel';
+import { UITheme } from 'components/theme';
+import { DirectionButton, PillButton, SmallButton } from 'components/ui/Button';
+import { ModeTab } from 'components/ui/ModeTab';
+import { SectionLabel } from 'components/ui/SectionLabel';
+import { type ArcConfig, PlacementMode, PlacementSystem, SnapMode } from 'PlacementSystem';
+import type { LoadedPrefab } from 'PrefabService';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Small reusable primitives
-// ─────────────────────────────────────────────────────────────────────────────
+export type ArrayDirection = 'px' | 'nx' | 'pz' | 'nz';
 
-function SectionLabel({ text }: { text: string }) {
-	return (
-		<textlabel
-			Size={new UDim2(1, 0, 0, 14)}
-			BackgroundTransparency={1}
-			Font={Enum.Font.Unknown}
-			FontFace={UITheme.fonts.semiBold}
-			Text={text}
-			TextColor3={UITheme.colors.textMuted}
-			TextSize={10}
-			TextXAlignment={Enum.TextXAlignment.Left}
-		/>
-	);
-}
-
-function PillButton({
-	label,
-	active,
-	onClick,
-	layoutOrder,
-}: {
-	label: string;
-	active: boolean;
-	onClick: () => void;
-	layoutOrder?: number;
-}) {
-	return (
-		<textbutton
-			Size={new UDim2(0, 0, 0, 24)}
-			AutomaticSize={Enum.AutomaticSize.X}
-			LayoutOrder={layoutOrder}
-			BackgroundColor3={active ? UITheme.colors.accent : UITheme.colors.surfaceRaised}
-			BackgroundTransparency={active ? 0.08 : 0.25}
-			BorderSizePixel={0}
-			Font={Enum.Font.Unknown}
-			FontFace={active ? UITheme.fonts.semiBold : UITheme.fonts.regular}
-			Text={label}
-			TextColor3={active ? UITheme.colors.text : UITheme.colors.textMuted}
-			TextSize={12}
-			AutoButtonColor={false}
-			Event={{ Activated: onClick }}
-		>
-			<uicorner CornerRadius={UITheme.radius.pill} />
-			<uipadding PaddingLeft={new UDim(0, 8)} PaddingRight={new UDim(0, 8)} />
-			{active && <uistroke Color={UITheme.colors.accent} Transparency={0.4} Thickness={1} />}
-		</textbutton>
-	);
-}
-
-function ModeTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-	return (
-		<textbutton
-			Size={new UDim2(0.5, -2, 1, 0)}
-			BackgroundColor3={active ? UITheme.colors.accent : UITheme.colors.surfaceRaised}
-			BackgroundTransparency={active ? 0.08 : 0.2}
-			BorderSizePixel={0}
-			Font={Enum.Font.Unknown}
-			FontFace={active ? UITheme.fonts.semiBold : UITheme.fonts.regular}
-			Text={label}
-			TextColor3={UITheme.colors.text}
-			TextSize={13}
-			AutoButtonColor={false}
-			Event={{ Activated: onClick }}
-		>
-			<uicorner CornerRadius={UITheme.radius.sm} />
-			{active && <uistroke Color={UITheme.colors.accent} Transparency={0.35} Thickness={1} />}
-		</textbutton>
-	);
-}
-
-type ArrayDirection = 'px' | 'nx' | 'pz' | 'nz';
-const DIR_LABELS: Record<ArrayDirection, string> = { px: '+X →', nx: '← -X', pz: '+Z ↓', nz: '↑ -Z' };
-
-function DirectionButton({ dir, active, onClick }: { dir: ArrayDirection; active: boolean; onClick: () => void }) {
-	return (
-		<textbutton
-			Size={new UDim2(0.5, -4, 0, 30)}
-			BackgroundColor3={active ? UITheme.colors.warning : UITheme.colors.surfaceRaised}
-			BackgroundTransparency={active ? 0.08 : 0.25}
-			BorderSizePixel={0}
-			Font={Enum.Font.Unknown}
-			FontFace={active ? UITheme.fonts.semiBold : UITheme.fonts.regular}
-			Text={DIR_LABELS[dir]}
-			TextColor3={active ? Color3.fromRGB(20, 16, 0) : UITheme.colors.text}
-			TextSize={12}
-			AutoButtonColor={false}
-			Event={{ Activated: onClick }}
-		>
-			<uicorner CornerRadius={UITheme.radius.sm} />
-		</textbutton>
-	);
-}
-
-function SmallButton({
-	text,
-	onClick,
-	accent,
-	disabled,
-	layoutOrder,
-}: {
-	text: string;
-	onClick: () => void;
-	accent?: boolean;
-	disabled?: boolean;
-	layoutOrder?: number;
-}) {
-	return (
-		<textbutton
-			Size={new UDim2(1, 0, 0, 28)}
-			LayoutOrder={layoutOrder}
-			BackgroundColor3={
-				disabled ? UITheme.colors.surfaceRaised : accent ? UITheme.colors.accent : UITheme.colors.surfaceRaised
-			}
-			BackgroundTransparency={disabled ? 0.4 : 0.08}
-			BorderSizePixel={0}
-			Font={Enum.Font.Unknown}
-			FontFace={UITheme.fonts.semiBold}
-			Text={text}
-			TextColor3={disabled ? UITheme.colors.textMuted : UITheme.colors.text}
-			TextSize={12}
-			AutoButtonColor={false}
-			Active={!disabled}
-			Event={{ Activated: disabled ? () => {} : onClick }}
-		>
-			<uicorner CornerRadius={UITheme.radius.sm} />
-		</textbutton>
-	);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Arc controls panel — mirrors Archimedes' Direction + Angle + Control panels
-// ─────────────────────────────────────────────────────────────────────────────
-
-function ArcPanel({ arc, onArcChange }: { arc: ArcConfig; onArcChange: (partial: Partial<ArcConfig>) => void }) {
-	const [angleInput, setAngleInput] = useState(tostring(arc.angle));
-
-	// Rotation types valid per axis (mirrors Archimedes' defaults)
-	const rotTypes: Array<{ axis: ArcAxis; type: ArcRotationType; label: string }> = [
-		{ axis: 'X', type: 'Yaw', label: 'X²' },
-		{ axis: 'X', type: 'Pitch', label: 'X' },
-		{ axis: 'Y', type: 'Roll', label: 'Y²' },
-		{ axis: 'Y', type: 'Pitch', label: 'Y' },
-		{ axis: 'Z', type: 'Yaw', label: 'Z²' },
-		{ axis: 'Z', type: 'Pitch', label: 'Z' },
-	];
-
-	const commitAngle = (raw: string) => {
-		const n = tonumber(raw) as number | undefined;
-		if (n !== undefined) {
-			const clamped = math.clamp(n, -270, 270);
-			onArcChange({ angle: clamped });
-			setAngleInput(tostring(clamped));
-		} else {
-			setAngleInput(tostring(arc.angle));
-		}
-	};
-
-	return (
-		<frame
-			Size={new UDim2(1, 0, 0, 0)}
-			AutomaticSize={Enum.AutomaticSize.Y}
-			BackgroundTransparency={1}
-			BorderSizePixel={0}
-		>
-			<uilistlayout
-				FillDirection={Enum.FillDirection.Vertical}
-				Padding={new UDim(0, 8)}
-				SortOrder={Enum.SortOrder.LayoutOrder}
-			/>
-
-			{/* ── Enable toggle ── */}
-			<frame Size={new UDim2(1, 0, 0, 26)} BackgroundTransparency={1} BorderSizePixel={0} LayoutOrder={0}>
-				<uilistlayout FillDirection={Enum.FillDirection.Horizontal} Padding={new UDim(0, 8)} />
-				<textlabel
-					Size={new UDim2(1, -60, 1, 0)}
-					BackgroundTransparency={1}
-					Font={Enum.Font.Unknown}
-					FontFace={UITheme.fonts.semiBold}
-					Text='Arc Placement'
-					TextColor3={arc.enabled ? UITheme.colors.accent : UITheme.colors.textMuted}
-					TextSize={13}
-					TextXAlignment={Enum.TextXAlignment.Left}
-				/>
-				<textbutton
-					Size={new UDim2(0, 52, 0, 26)}
-					BackgroundColor3={arc.enabled ? UITheme.colors.accent : UITheme.colors.surfaceRaised}
-					BackgroundTransparency={0.1}
-					BorderSizePixel={0}
-					Font={Enum.Font.Unknown}
-					FontFace={UITheme.fonts.semiBold}
-					Text={arc.enabled ? 'ON' : 'OFF'}
-					TextColor3={arc.enabled ? UITheme.colors.text : UITheme.colors.textMuted}
-					TextSize={11}
-					AutoButtonColor={false}
-					Event={{ Activated: () => onArcChange({ enabled: !arc.enabled }) }}
-				>
-					<uicorner CornerRadius={UITheme.radius.sm} />
-				</textbutton>
-			</frame>
-
-			{arc.enabled && (
-				<>
-					{/* ── Angle ── */}
-					<frame
-						Size={new UDim2(1, 0, 0, 0)}
-						AutomaticSize={Enum.AutomaticSize.Y}
-						BackgroundTransparency={1}
-						BorderSizePixel={0}
-						LayoutOrder={1}
-					>
-						<uilistlayout FillDirection={Enum.FillDirection.Vertical} Padding={new UDim(0, 4)} />
-						<SectionLabel text='ANGLE (degrees)' />
-						<frame Size={new UDim2(1, 0, 0, 30)} BackgroundTransparency={1} BorderSizePixel={0}>
-							<uilistlayout FillDirection={Enum.FillDirection.Horizontal} Padding={new UDim(0, 4)} />
-							{/* − */}
-							<textbutton
-								Size={new UDim2(0, 28, 1, 0)}
-								BackgroundColor3={UITheme.colors.surfaceRaised}
-								BackgroundTransparency={0.1}
-								BorderSizePixel={0}
-								Text='−'
-								Font={Enum.Font.Unknown}
-								FontFace={UITheme.fonts.bold}
-								TextColor3={UITheme.colors.text}
-								TextSize={16}
-								AutoButtonColor={false}
-								Event={{
-									Activated: () => {
-										const nextArc = math.clamp(arc.angle - 2.5, -270, 270);
-										onArcChange({ angle: nextArc });
-										setAngleInput(tostring(nextArc));
-									},
-								}}
-							>
-								<uicorner CornerRadius={UITheme.radius.sm} />
-							</textbutton>
-
-							{/* text input */}
-							<frame
-								Size={new UDim2(1, -64, 1, 0)}
-								BackgroundColor3={UITheme.colors.surfaceRaised}
-								BackgroundTransparency={0.08}
-								BorderSizePixel={0}
-							>
-								<uicorner CornerRadius={UITheme.radius.sm} />
-								<textbox
-									Size={UDim2.fromScale(1, 1)}
-									BackgroundTransparency={1}
-									BorderSizePixel={0}
-									Font={Enum.Font.Unknown}
-									FontFace={UITheme.fonts.regular}
-									Text={angleInput}
-									TextColor3={UITheme.colors.text}
-									TextSize={13}
-									TextXAlignment={Enum.TextXAlignment.Center}
-									ClearTextOnFocus={false}
-									Change={{
-										Text: (rbx: unknown) => {
-											if (typeIs(rbx, 'Instance') && (rbx as Instance).IsA('TextBox'))
-												setAngleInput((rbx as TextBox).Text);
-										},
-									}}
-									Event={{
-										FocusLost: () => commitAngle(angleInput),
-									}}
-								/>
-							</frame>
-
-							{/* + */}
-							<textbutton
-								Size={new UDim2(0, 28, 1, 0)}
-								BackgroundColor3={UITheme.colors.surfaceRaised}
-								BackgroundTransparency={0.1}
-								BorderSizePixel={0}
-								Text='+'
-								Font={Enum.Font.Unknown}
-								FontFace={UITheme.fonts.bold}
-								TextColor3={UITheme.colors.text}
-								TextSize={16}
-								AutoButtonColor={false}
-								Event={{
-									Activated: () => {
-										const nextArc = math.clamp(arc.angle + 2.5, -270, 270);
-										onArcChange({ angle: nextArc });
-										setAngleInput(tostring(nextArc));
-									},
-								}}
-							>
-								<uicorner CornerRadius={UITheme.radius.sm} />
-							</textbutton>
-						</frame>
-						<textlabel
-							Size={new UDim2(1, 0, 0, 11)}
-							BackgroundTransparency={1}
-							Font={Enum.Font.Unknown}
-							FontFace={UITheme.fonts.regular}
-							Text='±2.5° per click · negative = reverse curve'
-							TextColor3={UITheme.colors.textMuted}
-							TextSize={9}
-							TextXAlignment={Enum.TextXAlignment.Left}
-						/>
-					</frame>
-
-					{/* ── Direction / RotationType ── */}
-					<frame
-						Size={new UDim2(1, 0, 0, 0)}
-						AutomaticSize={Enum.AutomaticSize.Y}
-						BackgroundTransparency={1}
-						BorderSizePixel={0}
-						LayoutOrder={2}
-					>
-						<uilistlayout FillDirection={Enum.FillDirection.Vertical} Padding={new UDim(0, 4)} />
-						<SectionLabel text='DIRECTION' />
-						<frame Size={new UDim2(1, 0, 0, 56)} BackgroundTransparency={1} BorderSizePixel={0}>
-							<uigridlayout
-								CellSize={new UDim2(1 / 3, -4, 0, 24)}
-								CellPadding={new UDim2(0, 4, 0, 4)}
-								HorizontalAlignment={Enum.HorizontalAlignment.Left}
-								VerticalAlignment={Enum.VerticalAlignment.Top}
-								SortOrder={Enum.SortOrder.LayoutOrder}
-							/>
-							{rotTypes.map((rt, i) => {
-								const isActive = arc.axis === rt.axis && arc.rotationType === rt.type;
-								return (
-									<textbutton
-										key={`${rt.axis}-${rt.type}`}
-										LayoutOrder={i}
-										BackgroundColor3={
-											isActive ? UITheme.colors.accent : UITheme.colors.surfaceRaised
-										}
-										BackgroundTransparency={isActive ? 0.08 : 0.25}
-										BorderSizePixel={0}
-										Font={Enum.Font.Unknown}
-										FontFace={isActive ? UITheme.fonts.semiBold : UITheme.fonts.regular}
-										Text={rt.label}
-										TextColor3={isActive ? UITheme.colors.text : UITheme.colors.textMuted}
-										TextSize={12}
-										AutoButtonColor={false}
-										Event={{
-											Activated: () => onArcChange({ axis: rt.axis, rotationType: rt.type }),
-										}}
-									>
-										<uicorner CornerRadius={UITheme.radius.sm} />
-									</textbutton>
-								);
-							})}
-						</frame>
-					</frame>
-
-					{/* ── Alignment ── */}
-					<frame
-						Size={new UDim2(1, 0, 0, 0)}
-						AutomaticSize={Enum.AutomaticSize.Y}
-						BackgroundTransparency={1}
-						BorderSizePixel={0}
-						LayoutOrder={3}
-					>
-						<uilistlayout FillDirection={Enum.FillDirection.Vertical} Padding={new UDim(0, 4)} />
-						<SectionLabel text='HINGE' />
-						<frame Size={new UDim2(1, 0, 0, 26)} BackgroundTransparency={1} BorderSizePixel={0}>
-							<uilistlayout FillDirection={Enum.FillDirection.Horizontal} Padding={new UDim(0, 4)} />
-							<PillButton
-								label='Inner'
-								active={arc.alignment === 'Inside'}
-								onClick={() => onArcChange({ alignment: 'Inside' })}
-							/>
-							<PillButton
-								label='Center'
-								active={arc.alignment === 'Middle'}
-								onClick={() => onArcChange({ alignment: 'Middle' })}
-							/>
-							<PillButton
-								label='Outer'
-								active={arc.alignment === 'Outside'}
-								onClick={() => onArcChange({ alignment: 'Outside' })}
-							/>
-						</frame>
-					</frame>
-
-					{/* ── Face Alignment ── */}
-					<frame
-						Size={new UDim2(1, 0, 0, 0)}
-						AutomaticSize={Enum.AutomaticSize.Y}
-						BackgroundTransparency={1}
-						BorderSizePixel={0}
-						LayoutOrder={4}
-					>
-						<uilistlayout FillDirection={Enum.FillDirection.Vertical} Padding={new UDim(0, 4)} />
-						<SectionLabel text='CORNER' />
-						<frame Size={new UDim2(1, 0, 0, 26)} BackgroundTransparency={1} BorderSizePixel={0}>
-							<uilistlayout FillDirection={Enum.FillDirection.Horizontal} Padding={new UDim(0, 4)} />
-							<PillButton
-								label='Left'
-								active={arc.faceAlignment === 'Left'}
-								onClick={() => onArcChange({ faceAlignment: 'Left' })}
-							/>
-							<PillButton
-								label='Center'
-								active={arc.faceAlignment === 'Center'}
-								onClick={() => onArcChange({ faceAlignment: 'Center' })}
-							/>
-							<PillButton
-								label='Right'
-								active={arc.faceAlignment === 'Right'}
-								onClick={() => onArcChange({ faceAlignment: 'Right' })}
-							/>
-						</frame>
-					</frame>
-
-					{/* ── Options row ── */}
-					<frame
-						Size={new UDim2(1, 0, 0, 0)}
-						AutomaticSize={Enum.AutomaticSize.Y}
-						BackgroundTransparency={1}
-						BorderSizePixel={0}
-						LayoutOrder={4}
-					>
-						<uilistlayout FillDirection={Enum.FillDirection.Vertical} Padding={new UDim(0, 4)} />
-						<SectionLabel text='OPTIONS' />
-						<frame Size={new UDim2(1, 0, 0, 26)} BackgroundTransparency={1} BorderSizePixel={0}>
-							<uilistlayout FillDirection={Enum.FillDirection.Horizontal} Padding={new UDim(0, 6)} />
-							<PillButton
-								label='Flip Axis'
-								active={arc.flipAxis}
-								onClick={() => onArcChange({ flipAxis: !arc.flipAxis })}
-							/>
-							<PillButton
-								label='Swap Sides'
-								active={arc.swapSides}
-								onClick={() => onArcChange({ swapSides: !arc.swapSides })}
-							/>
-						</frame>
-					</frame>
-
-					{/* ── Reset chain button ── */}
-					<SmallButton
-						text='Reset Arc Chain'
-						onClick={() => PlacementSystem.resetArcChain()}
-						layoutOrder={5}
-					/>
-				</>
-			)}
-		</frame>
-	);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Main PlacementUI
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function PlacementUI({
-	prefab,
-	onCancel,
-	onUndo,
-	mouse,
-}: {
-	prefab: LoadedPrefab;
-	onCancel: () => void;
-	onUndo: () => void;
-	mouse: Mouse;
-}) {
-	const [canUndo, setCanUndo] = useState(false);
+export function PlacementUI({ prefab, onCancel, mouse }: { prefab: LoadedPrefab; onCancel: () => void; mouse: Mouse }) {
+	const [placementRotation, setPlacementRotation] = useState(PlacementSystem.getRotationOffset());
 	const [snapMode, setSnapMode] = useState(PlacementSystem.getSnapMode());
 	const [gridSize, setGridSize] = useState('1');
-	const [placedCount, setPlacedCount] = useState(0);
 	const [placementMode, setPlacementMode] = useState(PlacementSystem.getPlacementMode());
 	const [arc, setArcState] = useState<ArcConfig>(PlacementSystem.getArcConfig());
-	const [pivotMode, setPivotMode] = useState(PlacementSystem.getPivotMode());
 	const activeDirRef = useRef<ArrayDirection | undefined>();
 	const arrayCountRef = useRef('5');
 
 	// Array mode
-	const [arrayAnchored, setArrayAnchored] = useState(false);
+	const [arrayAnchored, setArrayAnchored] = useState(PlacementSystem.isArrayAnchored());
 	const [activeDir, setActiveDir] = useState<ArrayDirection | undefined>();
 	const [arrayCount, setArrayCount] = useState('5');
 	const [arraySpacing, setArraySpacing] = useState('0');
 
-	// ── arc change handler ────────────────────────────────────────────────────
 	const handleArcChange = (partial: Partial<ArcConfig>) => {
 		PlacementSystem.setArcConfig(partial);
 		setArcState(PlacementSystem.getArcConfig());
 	};
 
-	const handlePivotChange = (mode: PlacementPivot) => {
-		PlacementSystem.setPivotMode(mode);
-		setPivotMode(mode);
-	};
-
-	// ── render loop + input ───────────────────────────────────────────────────
 	useEffect(() => {
 		const renderConn = RunService.RenderStepped.Connect(() => {
 			if (PlacementSystem.getPlacementMode() === PlacementMode.Array && PlacementSystem.isArrayAnchored()) {
@@ -531,14 +56,10 @@ export function PlacementUI({
 	useEffect(() => {
 		const inputConn = UserInputService.InputBegan.Connect((input, gameProcessed) => {
 			if (gameProcessed) return;
-
+			if (PlacementSystem.isSelectionModeActive()) return;
 			if (input.UserInputType === Enum.UserInputType.Keyboard) {
 				if (input.KeyCode === Enum.KeyCode.Escape) {
 					onCancel();
-					return;
-				}
-				if (input.KeyCode === Enum.KeyCode.Z && UserInputService.IsKeyDown(Enum.KeyCode.LeftControl)) {
-					onUndo();
 					return;
 				}
 			}
@@ -547,17 +68,16 @@ export function PlacementUI({
 
 			const currentMode = PlacementSystem.getPlacementMode();
 
-			if (currentMode === PlacementMode.Single) {
-				PlacementSystem.placePrefab(mouse.Hit.Position);
-			} else {
+			if (currentMode === PlacementMode.Single)
+				PlacementSystem.placePrefab(mouse.Hit.Position, PlacementSystem.getRotationOffset());
+			else {
 				if (!PlacementSystem.isArrayAnchored()) {
-					PlacementSystem.anchorArrayPlacement(mouse.Hit.Position, 0);
-					setArrayAnchored(true); // Update UI state
+					PlacementSystem.anchorArrayPlacement(mouse.Hit.Position, PlacementSystem.getRotationOffset());
+					setArrayAnchored(true);
 				} else if (activeDirRef.current) {
 					const n = tonumber(arrayCountRef.current) as number | undefined;
-					if (n !== undefined && n > 0) {
+					if (n !== undefined && n > 0)
 						PlacementSystem.commitArrayExtension(activeDirRef.current, math.floor(n));
-					}
 				}
 			}
 		});
@@ -565,24 +85,21 @@ export function PlacementUI({
 		return () => {
 			inputConn.Disconnect();
 		};
-	}, []); // Keep empty deps — setArrayAnchored is stable
+	}, []);
 
-	// ── array preview live update ─────────────────────────────────────────────
 	useEffect(() => {
 		if (placementMode !== PlacementMode.Array || !arrayAnchored) {
 			PlacementSystem.clearArrayPreview();
 			return;
 		}
-		// In arc mode we don't need a direction; always preview from anchor
 		if (arc.enabled && arc.angle !== 0) {
 			if (!activeDir) {
 				PlacementSystem.clearArrayPreview();
 				return;
 			}
 			const n = tonumber(arrayCount) as number | undefined;
-			if (n !== undefined && n > 0) {
-				PlacementSystem.previewArrayExtension(activeDir, math.floor(n));
-			}
+			if (n !== undefined && n > 0) PlacementSystem.previewArrayExtension(activeDir, math.floor(n));
+
 			return;
 		}
 
@@ -594,8 +111,6 @@ export function PlacementUI({
 		if (n !== undefined && n > 0) PlacementSystem.previewArrayExtension(activeDir, math.floor(n));
 		else PlacementSystem.clearArrayPreview();
 	}, [activeDir, arrayCount, arrayAnchored, placementMode, arc]);
-
-	// ── handlers ──────────────────────────────────────────────────────────────
 
 	const handleSnapModeChange = (mode: SnapMode) => {
 		setSnapMode(mode);
@@ -614,6 +129,14 @@ export function PlacementUI({
 		setArrayAnchored(false);
 		setActiveDir(undefined);
 		PlacementSystem.clearArrayState();
+	};
+
+	const handleRotationChange = (value: string) => {
+		const n = tonumber(value) as number | undefined;
+		if (n !== undefined) {
+			PlacementSystem.setRotationOffset(n);
+			setPlacementRotation(PlacementSystem.getRotationOffset());
+		}
 	};
 
 	const handleSpacingChange = (value: string) => {
@@ -635,7 +158,6 @@ export function PlacementUI({
 		if (!n || n <= 0) return;
 		if (!activeDir) return;
 		PlacementSystem.commitArrayExtension(activeDir, math.floor(n));
-		// Anchor remains set, just the arrows move
 	};
 
 	const handleResetAnchor = () => {
@@ -645,9 +167,6 @@ export function PlacementUI({
 		activeDirRef.current = undefined;
 	};
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// Render
-	// ─────────────────────────────────────────────────────────────────────────
 	return (
 		<frame
 			Size={new UDim2(1, 0, 1, 0)}
@@ -686,16 +205,6 @@ export function PlacementUI({
 					Text={`Placing: ${prefab.name}`}
 					TextColor3={UITheme.colors.text}
 					TextSize={15}
-					TextXAlignment={Enum.TextXAlignment.Left}
-				/>
-				<textlabel
-					Size={new UDim2(1, 0, 0, 13)}
-					BackgroundTransparency={1}
-					Font={Enum.Font.Unknown}
-					FontFace={UITheme.fonts.regular}
-					Text={`${placedCount} placed`}
-					TextColor3={UITheme.colors.textMuted}
-					TextSize={11}
 					TextXAlignment={Enum.TextXAlignment.Left}
 				/>
 			</frame>
@@ -746,24 +255,6 @@ export function PlacementUI({
 					SortOrder={Enum.SortOrder.LayoutOrder}
 				/>
 
-				{/* ── Arc panel ── */}
-				<frame
-					Size={new UDim2(1, 0, 0, 0)}
-					AutomaticSize={Enum.AutomaticSize.Y}
-					BackgroundColor3={UITheme.colors.surface}
-					BackgroundTransparency={0.1}
-					BorderSizePixel={0}
-					LayoutOrder={0}
-				>
-					<uipadding
-						PaddingTop={new UDim(0, 10)}
-						PaddingBottom={new UDim(0, 10)}
-						PaddingLeft={new UDim(0, 12)}
-						PaddingRight={new UDim(0, 12)}
-					/>
-					<ArcPanel arc={arc} onArcChange={handleArcChange} />
-				</frame>
-
 				{/* thin separator */}
 				<frame
 					Size={new UDim2(1, 0, 0, 1)}
@@ -810,6 +301,34 @@ export function PlacementUI({
 					</frame>
 					{snapMode === SnapMode.Grid && (
 						<>
+							<SectionLabel text='ROTATION (degrees)' />
+							<frame
+								Size={new UDim2(0.5, 0, 0, 28)}
+								BackgroundColor3={UITheme.colors.surfaceRaised}
+								BackgroundTransparency={0.08}
+								BorderSizePixel={0}
+							>
+								<uicorner CornerRadius={UITheme.radius.sm} />
+								<textbox
+									Size={UDim2.fromScale(1, 1)}
+									BackgroundTransparency={1}
+									BorderSizePixel={0}
+									Font={Enum.Font.Unknown}
+									FontFace={UITheme.fonts.regular}
+									Text={tostring(placementRotation)}
+									TextColor3={UITheme.colors.text}
+									TextSize={12}
+									TextXAlignment={Enum.TextXAlignment.Center}
+									ClearTextOnFocus={false}
+									Change={{
+										Text: (rbx: unknown) => {
+											if (typeIs(rbx, 'Instance') && (rbx as Instance).IsA('TextBox')) {
+												handleRotationChange((rbx as TextBox).Text);
+											}
+										},
+									}}
+								/>
+							</frame>
 							<SectionLabel text='GRID SIZE (studs)' />
 							<frame
 								Size={new UDim2(0.5, 0, 0, 28)}
@@ -841,15 +360,6 @@ export function PlacementUI({
 					)}
 				</frame>
 
-				{/* thin separator */}
-				<frame
-					Size={new UDim2(1, 0, 0, 1)}
-					BackgroundColor3={UITheme.colors.stroke}
-					BackgroundTransparency={0.7}
-					BorderSizePixel={0}
-					LayoutOrder={3}
-				/>
-
 				{/* ── Array panel ── */}
 				{placementMode === PlacementMode.Array && (
 					<frame
@@ -868,8 +378,6 @@ export function PlacementUI({
 							PaddingRight={new UDim(0, 12)}
 						/>
 						<uilistlayout FillDirection={Enum.FillDirection.Vertical} Padding={new UDim(0, 7)} />
-
-						<SectionLabel text={arc.enabled ? 'ARRAY (ARC CURVE MODE)' : 'ARRAY'} />
 
 						<textlabel
 							Size={new UDim2(1, 0, 0, 0)}
@@ -892,6 +400,33 @@ export function PlacementUI({
 
 						{arrayAnchored && (
 							<>
+								{/* ── Arc panel ── */}
+								<frame
+									Size={new UDim2(1, 0, 0, 0)}
+									AutomaticSize={Enum.AutomaticSize.Y}
+									BackgroundColor3={UITheme.colors.surface}
+									BackgroundTransparency={0.1}
+									BorderSizePixel={0}
+									LayoutOrder={0}
+								>
+									<uipadding
+										PaddingTop={new UDim(0, 10)}
+										PaddingBottom={new UDim(0, 10)}
+										PaddingLeft={new UDim(0, 12)}
+										PaddingRight={new UDim(0, 12)}
+									/>
+									<ArcPanel arc={arc} onArcChange={handleArcChange} />
+								</frame>
+
+								{/* thin separator */}
+								<frame
+									Size={new UDim2(1, 0, 0, 1)}
+									BackgroundColor3={UITheme.colors.stroke}
+									BackgroundTransparency={0.7}
+									BorderSizePixel={0}
+									LayoutOrder={3}
+								/>
+
 								{/* Direction grid — hidden when arc is doing the layout */}
 								{!arc.enabled && (
 									<>
@@ -945,42 +480,6 @@ export function PlacementUI({
 													onClick={() => handleDirSelect('nz')}
 												/>
 											</frame>
-										</frame>
-										<SectionLabel text='PIVOT' />
-
-										<frame
-											Size={new UDim2(1, 0, 0, 26)}
-											BackgroundTransparency={1}
-											BorderSizePixel={0}
-										>
-											<uilistlayout
-												FillDirection={Enum.FillDirection.Horizontal}
-												Padding={new UDim(0, 4)}
-											/>
-
-											<PillButton
-												label='Center'
-												active={pivotMode === PlacementPivot.Center}
-												onClick={() => handlePivotChange(PlacementPivot.Center)}
-											/>
-
-											<PillButton
-												label='Back'
-												active={pivotMode === PlacementPivot.BackCenter}
-												onClick={() => handlePivotChange(PlacementPivot.BackCenter)}
-											/>
-
-											<PillButton
-												label='Left'
-												active={pivotMode === PlacementPivot.BackLeft}
-												onClick={() => handlePivotChange(PlacementPivot.BackLeft)}
-											/>
-
-											<PillButton
-												label='Right'
-												active={pivotMode === PlacementPivot.BackRight}
-												onClick={() => handlePivotChange(PlacementPivot.BackRight)}
-											/>
 										</frame>
 									</>
 								)}
@@ -1138,24 +637,6 @@ export function PlacementUI({
 					VerticalAlignment={Enum.VerticalAlignment.Center}
 					Padding={new UDim(0, 8)}
 				/>
-
-				{/* Undo */}
-				<textbutton
-					Size={new UDim2(0, 56, 1, 0)}
-					BackgroundColor3={UITheme.colors.surfaceRaised}
-					BackgroundTransparency={canUndo ? 0.1 : 0.4}
-					BorderSizePixel={0}
-					Font={Enum.Font.Unknown}
-					FontFace={UITheme.fonts.semiBold}
-					Text='Undo'
-					TextColor3={canUndo ? UITheme.colors.text : UITheme.colors.textMuted}
-					TextSize={12}
-					AutoButtonColor={false}
-					Active={canUndo}
-					Event={{ Activated: canUndo ? onUndo : () => {} }}
-				>
-					<uicorner CornerRadius={UITheme.radius.sm} />
-				</textbutton>
 
 				{/* Cancel */}
 				<textbutton
