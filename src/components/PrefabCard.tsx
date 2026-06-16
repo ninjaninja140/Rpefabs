@@ -19,32 +19,33 @@ export function PrefabCard({
 
 		const viewport = viewportRef.current;
 
-		// Clear any existing children
-		for (const child of viewport.GetChildren()) {
-			child.Destroy();
+		// Clear existing children but reuse camera if it exists
+		let camera = viewport.CurrentCamera;
+		if (!camera) {
+			camera = new Instance('Camera');
+			camera.Parent = viewport;
+			viewport.CurrentCamera = camera;
 		}
 
-		// Clone the prefab model for the viewport
+		// Clear only model children (not the camera)
+		for (const child of viewport.GetChildren()) {
+			if (child !== camera) child.Destroy();
+		}
+
+		// Clone the prefab model
 		const modelClone = prefab.model.Clone();
 		modelClone.Parent = viewport;
 
-		// Set up camera
-		const camera = new Instance('Camera');
-		camera.Parent = viewport;
-		viewport.CurrentCamera = camera;
+		const [modelCFrame, size] = modelClone.GetBoundingBox();
 
-		// Calculate model size to fit in viewport
-		const size = modelClone.GetBoundingBox()[1];
 		const maxDim = math.max(size.X, size.Y, size.Z);
 		const distance = maxDim * 1.5;
-
-		// Position camera to view the model - static angle
-		const modelCFrame = modelClone.GetBoundingBox()[0];
 		const cameraPos = modelCFrame.mul(new CFrame(distance, distance * 0.5, distance));
 		camera.CFrame = CFrame.lookAt(cameraPos.Position, modelCFrame.Position);
 
 		return () => {
 			modelClone.Destroy();
+			// Keep camera for reuse
 		};
 	}, [prefab]);
 

@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from '@rbxts/react';
 import { Workspace } from '@rbxts/services';
+import { KeyboardHints } from 'components/KeyboardHints';
+import { PrefabCard } from 'components/PrefabCard';
 import type { LoadedPrefab } from 'services/PrefabService';
 import { Input } from 'ui/components/Input';
 import { ScrollArea } from 'ui/components/ScrollArea';
 import { UITheme } from 'ui/theme';
-import { KeyboardHints } from './KeyboardHints';
-import { PrefabCard } from './PrefabCard';
 
 export function PrefabLibrary({
 	mouse,
@@ -28,30 +28,28 @@ export function PrefabLibrary({
 	const [isSelectingModel, setIsSelectingModel] = useState(false);
 
 	useEffect(() => {
-		if (isSelectingModel && isCreatingPrefab) {
-			// Listen for Descendant changes to detect model selection from workspace
-			// This is a workaround since we can't directly access Selection service
-			// Users can also manually select by clicking
+		if (!isSelectingModel || !isCreatingPrefab) return;
 
-			// Create a better approach: listen to mouse position
-			let mouseConnection: RBXScriptConnection | undefined;
+		let lastCheck = 0;
+		const THROTTLE_MS = 0.1; // ~10 checks per second instead of 60
 
-			mouseConnection = mouse.Move.Connect(() => {
-				const target = mouse.Target;
-				if (target) {
-					let model = target.Parent;
-					// Walk up until we find a Model or reach workspace
-					while (model && model !== Workspace && !model.IsA('Model')) model = model.Parent;
-					if (model && model !== Workspace && model.IsA('Model')) setSelectedModel(model as Model);
+		const mouseConnection = mouse.Move.Connect(() => {
+			const now = os.clock();
+			if (now - lastCheck < THROTTLE_MS) return;
+			lastCheck = now;
+
+			const target = mouse.Target;
+			if (target) {
+				const model = target.FindFirstAncestorWhichIsA('Model');
+				if (model && model !== Workspace) {
+					setSelectedModel(model as Model);
 				}
-			});
+			}
+		});
 
-			return () => {
-				if (mouseConnection) {
-					mouseConnection.Disconnect();
-				}
-			};
-		}
+		return () => {
+			mouseConnection.Disconnect();
+		};
 	}, [isSelectingModel, isCreatingPrefab]);
 
 	const filteredPrefabs = prefabs.filter(

@@ -1,5 +1,5 @@
 {
-	"name": "roblox-ts-plugin-serve",
+	"name": "PrefabPlacementPlugin",
 	"globIgnorePaths": [
 		"**/package.json",
 		"**/tsconfig.json"
@@ -8,7 +8,7 @@
 		"$className": "DataModel",
 		"ServerScriptService": {
 			"$className": "ServerScriptService",
-			"Plugin": {
+			"PrefabPlacementPlugin": {
 				"$path": "./default.project.json"
 			}
 		}

@@ -1,14 +1,13 @@
 import React, { useEffect, useState } from '@rbxts/react';
-import { PlacementSystem } from '../services/PlacementSystem';
-import { type LoadedPrefab, PrefabService } from '../services/PrefabService';
-import { PlacementUI } from './PlacementUI';
-import { PrefabLibrary } from './PrefabLibrary';
+import { PlacementUI } from 'components/PlacementUI';
+import { PrefabLibrary } from 'components/PrefabLibrary';
+import { PlacementSystem } from 'services/PlacementSystem';
+import { type LoadedPrefab, PrefabService } from 'services/PrefabService';
 
 export function PrefabsApp({ mouse }: { mouse: Mouse }) {
 	const [prefabs, setPrefabs] = useState<LoadedPrefab[]>([]);
 	const [selectedPrefab, setSelectedPrefab] = useState<LoadedPrefab | undefined>(undefined);
 	const [isPlacing, setIsPlacing] = useState(false);
-	const [rotation, setRotation] = useState(0);
 	const [isCreatingPrefab, setIsCreatingPrefab] = useState(false);
 
 	useEffect(() => {
@@ -28,18 +27,12 @@ export function PrefabsApp({ mouse }: { mouse: Mouse }) {
 		setSelectedPrefab(prefab);
 		PlacementSystem.setSelectedPrefab(prefab);
 		setIsPlacing(true);
-		setRotation(0);
 	};
 
 	const handleCancelPlacement = () => {
 		setIsPlacing(false);
 		setSelectedPrefab(undefined);
 		PlacementSystem.cancelPlacement();
-	};
-
-	const handleRotationChange = (newRotation: number) => {
-		setRotation(newRotation);
-		PlacementSystem.setRotationOffset(newRotation);
 	};
 
 	const handleUndo = () => {
@@ -70,8 +63,6 @@ export function PrefabsApp({ mouse }: { mouse: Mouse }) {
 			{isPlacing && selectedPrefab ? (
 				<PlacementUI
 					prefab={selectedPrefab}
-					rotation={rotation}
-					onRotationChange={handleRotationChange}
 					onCancel={handleCancelPlacement}
 					onUndo={handleUndo}
 					mouse={mouse}
