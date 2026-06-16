@@ -354,19 +354,26 @@ class PlacementSystemClass {
 	}
 
 	private spawnPrefab(prefab: LoadedPrefab, pivotCF: CFrame): Model {
+		const prevModel = this.previousPrefabsByType.get(prefab.name);
 		const instance = prefab.model.Clone();
 		const infoScript = instance.FindFirstChild('Prefab.info') as ModuleScript | undefined;
+
 		let callback: ((prev: Model | undefined, next: Model) => void) | undefined;
+
 		if (infoScript?.IsA('ModuleScript')) {
 			const req = require(infoScript) as { prefab?: PrefabInfo };
 			callback = req.prefab?.AddedCallback;
 			infoScript.Destroy();
 		}
+
 		const gen = instance.FindFirstChild('__PrimaryPart__');
 		if (gen) gen.Destroy();
+
 		ensurePrimaryPart(instance);
 		instance.PivotTo(pivotCF);
-		instance.Parent = Workspace;
+
+		if (prevModel) instance.Parent = prevModel.Parent;
+		else instance.Parent = Workspace;
 
 		const prefabId = prefab.model.GetAttribute('PrefabID') as string | undefined;
 		if (prefabId) instance.SetAttribute('PrefabID', prefabId);
@@ -374,7 +381,7 @@ class PlacementSystemClass {
 
 		const tempPP = instance.FindFirstChild('__PrimaryPart__');
 		if (tempPP) tempPP.Destroy();
-		const prevModel = this.previousPrefabsByType.get(prefab.name);
+
 		if (callback)
 			task.spawn(() => {
 				try {
