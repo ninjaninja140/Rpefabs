@@ -1,4 +1,4 @@
-import { Workspace } from '@rbxts/services';
+import { Selection, Workspace } from '@rbxts/services';
 import { UITheme } from 'components/theme';
 import { PrefabService, type LoadedPrefab, type PrefabInfo } from 'PrefabService';
 
@@ -141,7 +141,6 @@ function groundedCFrame(position: Vector3, rotationDeg: number, model: Model): C
 }
 
 class PlacementSystemClass {
-	private placedPrefabs: PlacedPrefabEntry[] = [];
 	private previousPrefabsByType: Map<string, Model | undefined> = new Map();
 
 	private snapConfig: SnapConfig = {
@@ -392,7 +391,6 @@ class PlacementSystemClass {
 			});
 
 		this.previousPrefabsByType.set(prefab.name, instance);
-		this.placedPrefabs.push({ model: instance, prefabName: prefab.name });
 		return instance;
 	}
 
@@ -654,8 +652,10 @@ class PlacementSystemClass {
 				currentCF = computeNextArcCFrame(currentCF, size, this.arcConfig, direction);
 				const m = this.spawnPrefab(this.selectedPrefab, currentCF);
 				placed.push(m);
+				task.wait(0.05);
 			}
 			if (placed.size() > 0) this.lastPlacedCF = currentCF;
+			Selection.Set([this.previousPrefabsByType.get(this.selectedPrefab.name)!]);
 		} else {
 			const step = this.getStepVector(direction);
 			const [, size] = this.selectedPrefab.model.GetBoundingBox();
