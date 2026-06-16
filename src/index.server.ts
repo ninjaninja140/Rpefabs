@@ -4,7 +4,7 @@ import { PrefabsApp } from './components/PrefabsApp';
 import { PrefabService } from './services/PrefabService';
 
 const toolbar = plugin.CreateToolbar('Prefabs');
-const button = toolbar.CreateButton('Open Prefabs', '', 'rbxasset://textures/Cursor.png');
+const button = toolbar.CreateButton('Open Prefabs', '', 'rbxasset://textures/ArrowCursor.png');
 
 let dockWidget: DockWidgetPluginGui | undefined;
 let root: ReactRoblox.Root | undefined;
@@ -12,10 +12,10 @@ let root: ReactRoblox.Root | undefined;
 button.Click.Connect(() => {
 	if (!dockWidget) {
 		dockWidget = plugin.CreateDockWidgetPluginGuiAsync(
-			'PrefabsWindow',
+			'Prefabs Window',
 			new DockWidgetPluginGuiInfo(Enum.InitialDockState.Left, true, false, 300, 400, 300, 400)
 		);
-		dockWidget.Name = 'Prefabs';
+		(dockWidget as unknown as { Title: string }).Title = 'Prefabs Window';
 
 		const container = new Instance('Frame');
 		container.Size = UDim2.fromScale(1, 1);

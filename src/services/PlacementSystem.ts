@@ -9,7 +9,7 @@ export enum SnapMode {
 
 export enum PlacementMode {
 	Single = 'Single',
-	Linear = 'Linear',
+	Array = 'Array',
 }
 
 export interface PlacedPrefabEntry {
@@ -24,65 +24,92 @@ export interface SnapConfig {
 	rotationOffset: number;
 }
 
-export interface Face {
-	name: 'Front' | 'Back' | 'Top' | 'Bottom' | 'Left' | 'Right';
-	offset: Vector3;
-	rotation: CFrame;
+export interface ArrayPlacementAnchor {
+	/** World-space CFrame of the anchored first prefab */
+	cframe: CFrame;
+	/** Bounding-box half-extents of the prefab */
+	halfSize: Vector3;
 }
 
-export interface LinearPlacementState {
-	baseModel: Model;
-	direction: Vector3;
-	spacing: number;
+export interface ArrayPlacementPreview {
+	direction: 'px' | 'nx' | 'pz' | 'nz';
 	count: number;
 }
 
-// Helper function to get or create a PrimaryPart based on bounding box
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Ensure a Model has a PrimaryPart so MoveTo / PivotTo work reliably. */
 function ensurePrimaryPart(model: Model): void {
-	// Check if model already has a PrimaryPart - if so, use it
 	if (model.PrimaryPart) return;
 
-	// No BaseParts found, create one using bounding box
 	const [cframe, size] = model.GetBoundingBox();
+	if (size.X === 0 || size.Y === 0 || size.Z === 0) return;
 
-	if (size.X === 0 || size.Y === 0 || size.Z === 0) {
-		return; // No valid bounding box
-	}
-
-	const tempPart = new Instance('Part');
-	tempPart.Name = '__PrimaryPart__';
-	tempPart.Shape = Enum.PartType.Block;
-	tempPart.CanCollide = false;
-	tempPart.CFrame = cframe;
-	tempPart.Size = size;
-	tempPart.Transparency = 1; // Fully invisible
-	tempPart.Parent = model;
-	model.PrimaryPart = tempPart;
+	const part = new Instance('Part');
+	part.Name = '__PrimaryPart__';
+	part.Shape = Enum.PartType.Block;
+	part.CanCollide = false;
+	part.CFrame = cframe;
+	part.Size = size;
+	part.Transparency = 1;
+	part.Parent = model;
+	model.PrimaryPart = part;
 }
 
+/**
+ * Return the CFrame the model should be pivoted to so that its bounding-box
+ * *bottom* sits at `groundY` and its horizontal centre sits at `(x, z)`.
+ *
+ * This fixes the "shadow flies toward the camera" bug: previously we called
+ * MoveTo(mouse.Hit.Position) which moves the PrimaryPart (not the model
+ * pivot) to that point, causing the whole model to drift when the PrimaryPart
+ * is not at the geometric centre.
+ */
+function groundedCFrame(position: Vector3, rotation: number, model: Model): CFrame {
+	const [, size] = model.GetBoundingBox();
+	const halfHeight = size.Y / 2;
+
+	return new CFrame(position.X, position.Y + halfHeight, position.Z).mul(CFrame.Angles(0, math.rad(rotation), 0));
+}
+
+// ---------------------------------------------------------------------------
+// Placement system
+// ---------------------------------------------------------------------------
+
 class PlacementSystemClass {
+	// ---- state ---------------------------------------------------------------
 	private placedPrefabs: PlacedPrefabEntry[] = [];
 	private previousPrefabsByType: Map<string, Model> = new Map();
+
 	private snapConfig: SnapConfig = {
 		mode: SnapMode.Grid,
 		gridSize: 1,
 		faceSnapDistance: 5,
 		rotationOffset: 0,
 	};
+
 	private selectedPrefab: LoadedPrefab | undefined;
 	private shadowModel: Model | undefined;
-	private placementEnabled: boolean = false;
+
+	// ---- mode ----------------------------------------------------------------
 	private placementMode: PlacementMode = PlacementMode.Single;
-	private linearState: LinearPlacementState | undefined;
-	private arrowModels: Map<string, Model> = new Map(); // direction -> arrow model
+
+	// Array mode state
+	private arrayAnchor: ArrayPlacementAnchor | undefined;
+	private arrayArrows: Model[] = [];
+	private arrayPreviewModels: Model[] = [];
+	private _arraySpacing = 0;
+
+	// ---- shadow helpers ------------------------------------------------------
 
 	setSelectedPrefab(prefab: LoadedPrefab | undefined) {
 		this.selectedPrefab = prefab;
 		if (prefab && !this.shadowModel) {
 			this.createShadowModel(prefab);
 		} else if (!prefab && this.shadowModel) {
-			this.shadowModel.Destroy();
-			this.shadowModel = undefined;
+			this.destroyShadow();
 		}
 	}
 
@@ -91,157 +118,103 @@ class PlacementSystemClass {
 	}
 
 	private createShadowModel(prefab: LoadedPrefab) {
-		if (this.shadowModel) {
-			this.shadowModel.Destroy();
-		}
+		this.destroyShadow();
 
 		const shadow = prefab.model.Clone();
 		shadow.Name = 'Shadow';
 
-		// Remove Prefab.info script if present
 		const prefabInfo = shadow.FindFirstChild('Prefab.info');
-		if (prefabInfo?.IsA('ModuleScript')) {
-			prefabInfo.Destroy();
-		}
+		if (prefabInfo?.IsA('ModuleScript')) prefabInfo.Destroy();
 
-		// Ensure PrimaryPart is set for proper movement
 		ensurePrimaryPart(shadow);
 
-		// Cache descendants to avoid repeated calls
-		const descendants = shadow.GetDescendants();
-
-		// Make shadow semi-transparent and blue - OPTIMIZED: single pass
-		for (const descendant of descendants) {
-			if (descendant.IsA('BasePart')) {
-				const part = descendant as BasePart;
+		for (const desc of shadow.GetDescendants()) {
+			if (desc.IsA('BasePart')) {
+				const part = desc as BasePart;
 				part.Transparency = 0.6;
-				part.CanCollide = false;
-				part.Color = Color3.fromRGB(100, 150, 255); // Blue tint
+				part.Color = Color3.fromRGB(100, 150, 255);
+				desc.CanQuery = false;
+				desc.CanCollide = false;
+				desc.CanTouch = false;
 			}
 		}
 
 		this.shadowModel = shadow;
-		this.placementEnabled = true;
 	}
 
-	updateShadowPosition(cframe: CFrame) {
+	private destroyShadow() {
 		if (this.shadowModel) {
-			if (!this.shadowModel.Parent) {
-				this.shadowModel.Parent = Workspace;
-			}
-			// Use MoveTo to move the whole model to the position, preserving rotation
-			this.shadowModel.MoveTo(cframe.Position);
+			this.shadowModel.Destroy();
+			this.shadowModel = undefined;
 		}
+	}
+
+	/**
+	 * Move the shadow so its bottom rests on the hit surface.
+	 * Uses PivotTo (not MoveTo) so the model's geometric origin is placed
+	 * correctly regardless of where the PrimaryPart happens to be.
+	 */
+	updateShadowPosition(hitPosition: Vector3) {
+		if (!this.shadowModel || !this.selectedPrefab) return;
+
+		if (!this.shadowModel.Parent) {
+			this.shadowModel.Parent = Workspace;
+		}
+
+		const grounded = groundedCFrame(hitPosition, this.snapConfig.rotationOffset, this.selectedPrefab.model);
+
+		this.shadowModel.PivotTo(grounded);
 	}
 
 	getShadowModel(): Model | undefined {
 		return this.shadowModel;
 	}
 
-	placePrefab(position: Vector3, rotation: number = 0): Model | undefined {
-		if (!this.selectedPrefab) return undefined;
-
-		// Apply snapping
-		const snappedPosition = this.snapPosition(position, rotation);
-
-		// Create new instance
-		const instance = this.selectedPrefab.model.Clone();
-
-		// Remove Prefab.info script if present
-		const prefabInfo = instance.FindFirstChild('Prefab.info');
-		if (prefabInfo?.IsA('ModuleScript')) {
-			prefabInfo.Destroy();
-		}
-
-		// Remove generated __PrimaryPart__ before placement if it exists
-		const generatedPrimaryPart = instance.FindFirstChild('__PrimaryPart__');
-		if (generatedPrimaryPart) {
-			generatedPrimaryPart.Destroy();
-		}
-
-		// Ensure PrimaryPart exists for proper placement
-		ensurePrimaryPart(instance);
-
-		// Position and rotate
-		instance.MoveTo(snappedPosition.Position);
-		if (instance.PrimaryPart) {
-			instance.PivotTo(snappedPosition);
-		}
-		instance.Parent = Workspace;
-
-		// Remove the temporary primary part after positioning
-		const tempPrimary = instance.FindFirstChild('__PrimaryPart__');
-		if (tempPrimary) {
-			tempPrimary.Destroy();
-		}
-
-		// Call added callback with correct previousPrefab for this type
-		const prefabName = this.selectedPrefab.name;
-		const previousPrefab = this.previousPrefabsByType.get(prefabName);
-		if (this.selectedPrefab.addedCallback) {
-			this.selectedPrefab.addedCallback(previousPrefab, instance);
-		}
-
-		// Update tracking: now this instance becomes the previous for next placement
-		this.previousPrefabsByType.set(prefabName, instance);
-
-		// Track placed prefab
-		this.placedPrefabs.push({
-			model: instance,
-			prefabName: prefabName,
-		});
-
-		return instance;
-	}
+	// ---- snapping ------------------------------------------------------------
 
 	private snapPosition(position: Vector3, rotation: number): CFrame {
+		const rotCF = CFrame.Angles(0, math.rad(rotation), 0);
+
 		if (this.snapConfig.mode === SnapMode.None) {
-			return new CFrame(position).mul(CFrame.Angles(0, math.rad(rotation), 0));
+			return new CFrame(position).mul(rotCF);
 		}
 
 		if (this.snapConfig.mode === SnapMode.Grid) {
-			const grid = this.snapConfig.gridSize;
-			// Round to nearest grid point
-			const snappedX = math.round(position.X / grid) * grid;
-			const snappedY = math.round(position.Y / grid) * grid;
-			const snappedZ = math.round(position.Z / grid) * grid;
-			return new CFrame(new Vector3(snappedX, snappedY, snappedZ)).mul(CFrame.Angles(0, math.rad(rotation), 0));
+			const g = this.snapConfig.gridSize;
+			const sx = math.round(position.X / g) * g;
+			const sy = position.Y; // keep surface Y as-is
+			const sz = math.round(position.Z / g) * g;
+			return new CFrame(new Vector3(sx, sy, sz)).mul(rotCF);
 		}
 
 		if (this.snapConfig.mode === SnapMode.Face) {
-			// Face snapping: find nearby part faces and snap to them
-			const nearbyParts = this.findNearbyParts(position, this.snapConfig.faceSnapDistance);
-			if (nearbyParts.size() > 0) {
-				const nearestPart = nearbyParts[0];
-				const snappedPos = this.snapToFace(position, nearestPart as BasePart);
-				return new CFrame(snappedPos).mul(CFrame.Angles(0, math.rad(rotation), 0));
+			const nearby = this.findNearbyParts(position, this.snapConfig.faceSnapDistance);
+			if (nearby.size() > 0) {
+				const snapped = this.snapToFace(position, nearby[0]);
+				return new CFrame(snapped).mul(rotCF);
 			}
-			return new CFrame(position).mul(CFrame.Angles(0, math.rad(rotation), 0));
+			return new CFrame(position).mul(rotCF);
 		}
 
-		return new CFrame(position).mul(CFrame.Angles(0, math.rad(rotation), 0));
+		return new CFrame(position).mul(rotCF);
 	}
 
 	private findNearbyParts(position: Vector3, distance: number): BasePart[] {
-		// Use GetPartBoundsInRadius to find nearby parts
-		const parts = Workspace.GetPartBoundsInRadius(position, distance);
-		return parts;
+		return Workspace.GetPartBoundsInRadius(position, distance);
 	}
 
 	private snapToFace(position: Vector3, part: BasePart): Vector3 {
-		// Get part size and find closest face
 		const partSize = part.Size;
 		const partPos = part.Position;
 		const localPos = partPos.sub(position);
 
-		// Determine which face is closest
 		const distances = [
-			math.abs(localPos.X - partSize.X / 2), // Right
-			math.abs(localPos.X + partSize.X / 2), // Left
-			math.abs(localPos.Y - partSize.Y / 2), // Top
-			math.abs(localPos.Y + partSize.Y / 2), // Bottom
-			math.abs(localPos.Z - partSize.Z / 2), // Front
-			math.abs(localPos.Z + partSize.Z / 2), // Back
+			math.abs(localPos.X - partSize.X / 2),
+			math.abs(localPos.X + partSize.X / 2),
+			math.abs(localPos.Y - partSize.Y / 2),
+			math.abs(localPos.Y + partSize.Y / 2),
+			math.abs(localPos.Z - partSize.Z / 2),
+			math.abs(localPos.Z + partSize.Z / 2),
 		];
 
 		let minDist = math.huge;
@@ -253,66 +226,108 @@ class PlacementSystemClass {
 			}
 		}
 
-		// Snap to the closest face
-		const snappedPos = new Vector3(position.X, position.Y, position.Z);
-		if (faceIndex === 0) {
-			return new Vector3(partPos.X + partSize.X / 2, snappedPos.Y, snappedPos.Z); // Right face
-		} else if (faceIndex === 1) {
-			return new Vector3(partPos.X - partSize.X / 2, snappedPos.Y, snappedPos.Z); // Left face
-		} else if (faceIndex === 2) {
-			return new Vector3(snappedPos.X, partPos.Y + partSize.Y / 2, snappedPos.Z); // Top face
-		} else if (faceIndex === 3) {
-			return new Vector3(snappedPos.X, partPos.Y - partSize.Y / 2, snappedPos.Z); // Bottom face
-		} else if (faceIndex === 4) {
-			return new Vector3(snappedPos.X, snappedPos.Y, partPos.Z + partSize.Z / 2); // Front face
-		} else {
-			return new Vector3(snappedPos.X, snappedPos.Y, partPos.Z - partSize.Z / 2); // Back face
-		}
+		const s = new Vector3(position.X, position.Y, position.Z);
+		if (faceIndex === 0) return new Vector3(partPos.X + partSize.X / 2, s.Y, s.Z);
+		if (faceIndex === 1) return new Vector3(partPos.X - partSize.X / 2, s.Y, s.Z);
+		if (faceIndex === 2) return new Vector3(s.X, partPos.Y + partSize.Y / 2, s.Z);
+		if (faceIndex === 3) return new Vector3(s.X, partPos.Y - partSize.Y / 2, s.Z);
+		if (faceIndex === 4) return new Vector3(s.X, s.Y, partPos.Z + partSize.Z / 2);
+		return new Vector3(s.X, s.Y, partPos.Z - partSize.Z / 2);
 	}
+
+	getSnappedCFrame(position: Vector3, rotation: number): CFrame {
+		return this.snapPosition(position, rotation);
+	}
+
+	// ---- single placement ----------------------------------------------------
+
+	placePrefab(position: Vector3, rotation: number = 0): Model | undefined {
+		if (!this.selectedPrefab) return undefined;
+
+		const snappedCF = this.snapPosition(position, rotation);
+		// Ground the CFrame the same way we ground the shadow
+		const finalCF = groundedCFrame(snappedCF.Position, rotation, this.selectedPrefab.model);
+
+		return this.spawnPrefab(this.selectedPrefab, finalCF);
+	}
+
+	private spawnPrefab(prefab: LoadedPrefab, pivotCF: CFrame): Model {
+		const instance = prefab.model.Clone();
+
+		const infoScript = instance.FindFirstChild('Prefab.info');
+		if (infoScript?.IsA('ModuleScript')) infoScript.Destroy();
+
+		// Remove any generated primary part from the source before ensurePrimaryPart
+		const gen = instance.FindFirstChild('__PrimaryPart__');
+		if (gen) gen.Destroy();
+
+		ensurePrimaryPart(instance);
+		instance.PivotTo(pivotCF);
+		instance.Parent = Workspace;
+
+		// Clean up temp primary part
+		const tempPP = instance.FindFirstChild('__PrimaryPart__');
+		if (tempPP) tempPP.Destroy();
+
+		// Callbacks
+		const prefabName = prefab.name;
+		const previousPrefab = this.previousPrefabsByType.get(prefabName);
+		const callback = prefab.AddedCallback;
+
+		if (callback) {
+			print(`Running callback for ${prefabName}`);
+
+			task.spawn(() => {
+				try {
+					callback(previousPrefab, instance);
+				} catch (err) {
+					warn(`Prefab callback error (${prefabName}):`, err);
+				}
+			});
+		}
+		this.previousPrefabsByType.set(prefabName, instance);
+
+		this.placedPrefabs.push({ model: instance, prefabName });
+		return instance;
+	}
+
+	// ---- undo / cancel -------------------------------------------------------
 
 	undoLastPlacement(): boolean {
 		if (this.placedPrefabs.size() === 0) return false;
 
-		const lastPlaced = this.placedPrefabs.pop();
-		if (lastPlaced) {
-			const prefabName = lastPlaced.prefabName;
+		const last = this.placedPrefabs.pop();
+		if (!last) return false;
 
-			// Find the previous prefab of the same type before the one we're undoing
-			let newPrevious: Model | undefined = undefined;
-			for (let i = this.placedPrefabs.size() - 1; i >= 0; i--) {
-				if (this.placedPrefabs[i].prefabName === prefabName) {
-					newPrevious = this.placedPrefabs[i].model;
-					break;
-				}
+		const { prefabName } = last;
+		let newPrev: Model | undefined;
+		for (let i = this.placedPrefabs.size() - 1; i >= 0; i--) {
+			if (this.placedPrefabs[i].prefabName === prefabName) {
+				newPrev = this.placedPrefabs[i].model;
+				break;
 			}
-
-			// Update or remove the previous prefab tracking
-			if (newPrevious) {
-				this.previousPrefabsByType.set(prefabName, newPrevious);
-			} else {
-				this.previousPrefabsByType.delete(prefabName);
-			}
-
-			lastPlaced.model.Destroy();
-			return true;
+		}
+		if (newPrev) {
+			this.previousPrefabsByType.set(prefabName, newPrev);
+		} else {
+			this.previousPrefabsByType.delete(prefabName);
 		}
 
-		return false;
+		last.model.Destroy();
+		return true;
 	}
 
 	cancelPlacement() {
-		this.placementEnabled = false;
-		if (this.shadowModel) {
-			this.shadowModel.Destroy();
-			this.shadowModel = undefined;
-		}
+		this.destroyShadow();
+		this.clearArrayState();
 		this.selectedPrefab = undefined;
 	}
+
+	// ---- snap config ---------------------------------------------------------
 
 	setSnapMode(mode: SnapMode) {
 		this.snapConfig.mode = mode;
 	}
-
 	getSnapMode(): SnapMode {
 		return this.snapConfig.mode;
 	}
@@ -321,22 +336,20 @@ class PlacementSystemClass {
 		this.snapConfig.gridSize = math.max(0.1, size);
 	}
 
-	getSnappedCFrame(position: Vector3, rotation: number): CFrame {
-		return this.snapPosition(position, rotation);
-	}
-
 	setRotationOffset(rotation: number) {
 		this.snapConfig.rotationOffset = rotation % 360;
 	}
-
 	getRotationOffset(): number {
 		return this.snapConfig.rotationOffset;
 	}
 
+	// ---- placement mode ------------------------------------------------------
+
 	setPlacementMode(mode: PlacementMode) {
+		if (this.placementMode === mode) return;
 		this.placementMode = mode;
 		if (mode === PlacementMode.Single) {
-			this.clearLinearState();
+			this.clearArrayState();
 		}
 	}
 
@@ -344,61 +357,235 @@ class PlacementSystemClass {
 		return this.placementMode;
 	}
 
-	startLinearPlacement(baseModel: Model, direction: Vector3, spacing: number) {
-		this.linearState = {
-			baseModel,
-			direction: direction.Unit,
-			spacing,
-			count: 1,
+	// ---- array placement -----------------------------------------------------
+
+	setArraySpacing(spacing: number) {
+		this._arraySpacing = math.max(0, spacing);
+	}
+	getArraySpacing(): number {
+		return this._arraySpacing;
+	}
+
+	/** Called when user clicks to anchor the first prefab in array mode. */
+	anchorArrayPlacement(position: Vector3, rotation: number): Model | undefined {
+		if (!this.selectedPrefab) return undefined;
+
+		// Clear any previous anchor
+		this.clearArrayState();
+
+		const snappedCF = this.snapPosition(position, rotation);
+		const groundedCF2 = groundedCFrame(snappedCF.Position, rotation, this.selectedPrefab.model);
+
+		const [, size] = this.selectedPrefab.model.GetBoundingBox();
+		this.arrayAnchor = {
+			cframe: groundedCF2,
+			halfSize: size.div(2),
 		};
+
+		// Spawn the anchor prefab
+		const placed = this.spawnPrefab(this.selectedPrefab, groundedCF2);
+
+		// Spawn direction arrows
+		this.spawnArrayArrows(groundedCF2, size);
+
+		return placed;
 	}
 
-	getLinearState(): LinearPlacementState | undefined {
-		return this.linearState;
+	getArrayAnchor(): ArrayPlacementAnchor | undefined {
+		return this.arrayAnchor;
 	}
 
-	placeLinearPrefabs(direction: Vector3, count: number, spacing: number, rotation: number): Model[] {
-		if (!this.selectedPrefab || !this.linearState) return [];
+	/** Spawn arrow indicators on the four horizontal faces of the anchor. */
+	private spawnArrayArrows(anchorCF: CFrame, modelSize: Vector3) {
+		this.clearArrows();
+
+		const dirs: Array<{ id: 'px' | 'nx' | 'pz' | 'nz'; offset: Vector3; rot: number }> = [
+			{ id: 'px', offset: new Vector3(modelSize.X / 2 + 2, 0, 0), rot: -90 },
+			{ id: 'nx', offset: new Vector3(-(modelSize.X / 2 + 2), 0, 0), rot: 90 },
+			{ id: 'pz', offset: new Vector3(0, 0, modelSize.Z / 2 + 2), rot: 180 },
+			{ id: 'nz', offset: new Vector3(0, 0, -(modelSize.Z / 2 + 2)), rot: 0 },
+		];
+
+		for (const dir of dirs) {
+			const arrow = this.createArrowModel(dir.id);
+			const arrowPos = anchorCF.Position.add(dir.offset);
+			const arrowCF = new CFrame(arrowPos).mul(CFrame.Angles(0, math.rad(dir.rot), 0));
+
+			ensurePrimaryPart(arrow);
+			arrow.PivotTo(arrowCF);
+			arrow.Parent = Workspace;
+			this.arrayArrows.push(arrow);
+		}
+	}
+
+	/**
+	 * Build a simple arrow Model from basic Parts.
+	 * Arrow points in the +Z direction; caller rotates it into place.
+	 */
+	private createArrowModel(id: string): Model {
+		const model = new Instance('Model');
+		model.Name = `__ArrayArrow_${id}__`;
+
+		// Shaft
+		const shaft = new Instance('Part');
+		shaft.Name = 'Shaft';
+		shaft.Shape = Enum.PartType.Block;
+		shaft.Size = new Vector3(0.3, 0.3, 1.5);
+		shaft.CFrame = new CFrame(0, 0, 0);
+		shaft.Color = Color3.fromRGB(255, 200, 0);
+		shaft.Material = Enum.Material.Neon;
+		shaft.CanCollide = false;
+		shaft.CastShadow = false;
+		shaft.Transparency = 0;
+		shaft.Parent = model;
+		model.PrimaryPart = shaft;
+
+		// Head (cone-like wedge)
+		const head = new Instance('Part');
+		head.Name = 'Head';
+		head.Shape = Enum.PartType.Block;
+		head.Size = new Vector3(0.7, 0.7, 0.7);
+		head.CFrame = new CFrame(0, 0, 1.1);
+		head.Color = Color3.fromRGB(255, 200, 0);
+		head.Material = Enum.Material.Neon;
+		head.CanCollide = false;
+		head.CastShadow = false;
+		head.Transparency = 0;
+		head.Parent = model;
+
+		// Weld head to shaft
+		const weld = new Instance('WeldConstraint');
+		weld.Part0 = shaft;
+		weld.Part1 = head;
+		weld.Parent = shaft;
+
+		return model;
+	}
+
+	private clearArrows() {
+		for (const arrow of this.arrayArrows) {
+			if (arrow.Parent) arrow.Destroy();
+		}
+		this.arrayArrows = [];
+	}
+
+	/** Get arrow models so the UI can raycast against them. */
+	getArrayArrows(): Model[] {
+		return this.arrayArrows;
+	}
+
+	/**
+	 * Preview N prefabs extending from the anchor in the given direction.
+	 * Destroys the old preview first.
+	 */
+	previewArrayExtension(direction: 'px' | 'nx' | 'pz' | 'nz', count: number) {
+		if (!this.arrayAnchor || !this.selectedPrefab || count <= 0) {
+			this.clearArrayPreview();
+			return;
+		}
+
+		this.clearArrayPreview();
+
+		const step = this.getStepVector(direction);
+		const [, size] = this.selectedPrefab.model.GetBoundingBox();
+		const stride =
+			direction === 'px' || direction === 'nx' ? size.X + this._arraySpacing : size.Z + this._arraySpacing;
+
+		for (let i = 1; i <= count; i++) {
+			const offset = step.mul(stride * i);
+			const pos = this.arrayAnchor.cframe.Position.add(offset);
+			const cf = new CFrame(pos.X, this.arrayAnchor.cframe.Position.Y, pos.Z).mul(
+				CFrame.Angles(0, math.rad(this.snapConfig.rotationOffset), 0)
+			);
+			const ghost = this.selectedPrefab.model.Clone();
+			const info = ghost.FindFirstChild('Prefab.info');
+			if (info?.IsA('ModuleScript')) info.Destroy();
+
+			ensurePrimaryPart(ghost);
+
+			for (const desc of ghost.GetDescendants()) {
+				if (desc.IsA('BasePart')) {
+					const bp = desc as BasePart;
+					bp.Transparency = 0.75;
+					bp.CanCollide = false;
+					bp.Color = Color3.fromRGB(255, 200, 80);
+				}
+			}
+
+			ghost.PivotTo(cf);
+			ghost.Parent = Workspace;
+			this.arrayPreviewModels.push(ghost);
+		}
+	}
+
+	clearArrayPreview() {
+		for (const m of this.arrayPreviewModels) {
+			if (m.Parent) m.Destroy();
+		}
+		this.arrayPreviewModels = [];
+	}
+
+	/**
+	 * Commit N prefabs in a direction from the current anchor.
+	 */
+	commitArrayExtension(direction: 'px' | 'nx' | 'pz' | 'nz', count: number): Model[] {
+		if (!this.arrayAnchor || !this.selectedPrefab || count <= 0) return [];
+
+		this.clearArrayPreview();
+
+		const step = this.getStepVector(direction);
+		const [, size] = this.selectedPrefab.model.GetBoundingBox();
+		const stride =
+			direction === 'px' || direction === 'nx' ? size.X + this._arraySpacing : size.Z + this._arraySpacing;
 
 		const placed: Model[] = [];
-		const basePos = this.linearState.baseModel.GetBoundingBox()[0].Position;
-		const normDir = direction.Unit;
+		for (let i = 1; i <= count; i++) {
+			const offset = step.mul(stride * i);
+			const pos = this.arrayAnchor.cframe.Position.add(offset);
+			const cf = new CFrame(pos.X, this.arrayAnchor.cframe.Position.Y, pos.Z).mul(
+				CFrame.Angles(0, math.rad(this.snapConfig.rotationOffset), 0)
+			);
+			const model = this.spawnPrefab(this.selectedPrefab, cf);
+			placed.push(model);
+		}
 
-		for (let i = 0; i < count; i++) {
-			const offset = normDir.mul((this.getModelSize(this.selectedPrefab) + spacing) * i);
-			const position = basePos.add(offset);
-			const instance = this.placePrefab(position, rotation);
-			if (instance) {
-				placed.push(instance);
-			}
+		// Update anchor arrows to encompass new extent
+		if (placed.size() > 0) {
+			const lastModel = placed[placed.size() - 1];
+			const [lastCF, lastSize] = lastModel.GetBoundingBox();
+			// Extend arrows from new edge
+			this.spawnArrayArrows(this.arrayAnchor.cframe, this.arrayAnchor.halfSize.mul(2));
 		}
 
 		return placed;
 	}
 
-	private getModelSize(prefab: LoadedPrefab): number {
-		const [, size] = prefab.model.GetBoundingBox();
-		return math.max(size.X, size.Y, size.Z);
+	private getStepVector(direction: 'px' | 'nx' | 'pz' | 'nz'): Vector3 {
+		if (direction === 'px') return new Vector3(1, 0, 0);
+		if (direction === 'nx') return new Vector3(-1, 0, 0);
+		if (direction === 'pz') return new Vector3(0, 0, 1);
+		return new Vector3(0, 0, -1);
 	}
 
-	private clearLinearState() {
-		this.linearState = undefined;
-		// Clean up arrow models
-		this.arrowModels.forEach((model) => {
-			model.Destroy();
-		});
-		this.arrowModels.clear();
+	clearArrayState() {
+		this.clearArrows();
+		this.clearArrayPreview();
+		this.arrayAnchor = undefined;
 	}
+
+	isArrayAnchored(): boolean {
+		return this.arrayAnchor !== undefined;
+	}
+
+	// ---- misc ----------------------------------------------------------------
 
 	getPlacedCount(): number {
 		return this.placedPrefabs.size();
 	}
 
 	clearAll() {
-		for (const entry of this.placedPrefabs) {
-			entry.model.Destroy();
-		}
-		this.placedPrefabs.clear();
+		for (const entry of this.placedPrefabs) entry.model.Destroy();
+		this.placedPrefabs = [];
 	}
 }
 

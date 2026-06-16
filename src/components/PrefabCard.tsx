@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from "@rbxts/react";
-import { LoadedPrefab } from "../services/PrefabService";
-import { Tooltip } from "ui/components/Tooltip";
-import { UITheme } from "ui/theme";
+import React, { useEffect, useRef } from '@rbxts/react';
+import type { LoadedPrefab } from 'services/PrefabService';
+import { Tooltip } from 'ui/components/Tooltip';
+import { UITheme } from 'ui/theme';
 
 export function PrefabCard({
 	prefab,
@@ -12,7 +12,6 @@ export function PrefabCard({
 	onSelect: () => void;
 	LayoutOrder?: number;
 }) {
-	const [hovered, setHovered] = useState(false);
 	const viewportRef = useRef<ViewportFrame>(undefined);
 
 	useEffect(() => {
@@ -30,7 +29,7 @@ export function PrefabCard({
 		modelClone.Parent = viewport;
 
 		// Set up camera
-		const camera = new Instance("Camera");
+		const camera = new Instance('Camera');
 		camera.Parent = viewport;
 		viewport.CurrentCamera = camera;
 
@@ -50,60 +49,53 @@ export function PrefabCard({
 	}, [prefab]);
 
 	return (
-		<Tooltip Content={prefab.tooltip} DelayMs={300} Children={
-			<textbutton
-				Size={new UDim2(0, 120, 0, 120)}
-				BackgroundColor3={hovered ? UITheme.colors.surfaceRaised : UITheme.colors.surface}
-				BackgroundTransparency={hovered ? 0.05 : 0.2}
-				BorderSizePixel={0}
-				Text=""
-				AutoButtonColor={false}
-				LayoutOrder={LayoutOrder}
-				Event={{
-					MouseEnter: () => setHovered(true),
-					MouseLeave: () => setHovered(false),
-					MouseButton1Click: onSelect,
-				}}
-			>
-				<uicorner CornerRadius={UITheme.radius.md} />
-				<uistroke
-					Color={UITheme.colors.stroke}
-					Transparency={hovered ? 0.3 : 0.7}
-					Thickness={2}
-				/>
-
-				{/* Viewport for 3D preview */}
-				<frame
-					Size={new UDim2(1, 0, 0.7, 0)}
-					BackgroundTransparency={1}
+		<Tooltip
+			Content={prefab.tooltip}
+			DelayMs={300}
+			Children={
+				<textbutton
+					Size={new UDim2(0, 120, 0, 120)}
+					BackgroundColor3={UITheme.colors.surfaceRaised}
+					BackgroundTransparency={0.05}
 					BorderSizePixel={0}
+					Text=''
+					AutoButtonColor={false}
+					LayoutOrder={LayoutOrder}
+					Event={{
+						MouseButton1Click: onSelect,
+					}}
 				>
-					<viewportframe
-						ref={viewportRef}
-						Size={new UDim2(1, 0, 1, 0)}
+					<uicorner CornerRadius={UITheme.radius.md} />
+					<uistroke Color={UITheme.colors.stroke} Transparency={0.3} Thickness={2} />
+
+					{/* Viewport for 3D preview */}
+					<frame Size={new UDim2(1, 0, 0.7, 0)} BackgroundTransparency={1} BorderSizePixel={0}>
+						<uicorner CornerRadius={UITheme.radius.md} />
+						<viewportframe
+							ref={viewportRef}
+							Size={new UDim2(1, 0, 1, 0)}
+							BackgroundTransparency={1}
+							BorderSizePixel={0}
+						/>
+					</frame>
+
+					{/* Name label */}
+					<textlabel
+						Size={new UDim2(1, 0, 0.2, 0)}
+						Position={new UDim2(0, 0, 0.7, 0)}
 						BackgroundTransparency={1}
 						BorderSizePixel={0}
+						Font={Enum.Font.Unknown}
+						FontFace={UITheme.fonts.semiBold}
+						Text={prefab.name}
+						TextColor3={UITheme.colors.text}
+						TextSize={13}
+						TextXAlignment={Enum.TextXAlignment.Center}
+						TextYAlignment={Enum.TextYAlignment.Center}
+						TextWrapped={true}
 					/>
-				</frame>
-
-				{/* Name label */}
-				<textlabel
-					Size={new UDim2(1, 0, 0.3, 0)}
-					Position={new UDim2(0, 0, 0.7, 0)}
-					BackgroundTransparency={1}
-					BorderSizePixel={0}
-					Font={Enum.Font.Unknown}
-					FontFace={UITheme.fonts.semiBold}
-					Text={prefab.name}
-					TextColor3={UITheme.colors.text}
-					TextSize={12}
-					TextXAlignment={Enum.TextXAlignment.Center}
-					TextYAlignment={Enum.TextYAlignment.Center}
-					TextWrapped={true}
-					TextScaled={true}
-				/>
-			</textbutton>
-		} />
+				</textbutton>
+			}
+		/>
 	);
 }
-

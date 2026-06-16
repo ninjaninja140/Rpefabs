@@ -1,3 +1,5 @@
+import { ServerStorage } from '@rbxts/services';
+
 export interface PrefabInfo {
 	Name: string;
 	Tooltip: string;
@@ -9,7 +11,7 @@ export interface LoadedPrefab {
 	tooltip: string;
 	model: Model;
 	info: PrefabInfo;
-	addedCallback?: (previousPrefab: Model | undefined, newPrefab: Model) => void;
+	AddedCallback?: (previousPrefab: Model | undefined, newPrefab: Model) => void;
 }
 
 type PrefabChangeListener = (prefabs: LoadedPrefab[]) => void;
@@ -23,14 +25,12 @@ class PrefabServiceClass {
 	private refreshScheduled: boolean = false;
 
 	scanPrefabs(): LoadedPrefab[] {
-		const serverStorage = game.GetService('ServerStorage');
-
 		// Ensure Prefabs folder exists
-		let prefabsFolder = serverStorage.FindFirstChild('Prefabs') as Folder | undefined;
+		let prefabsFolder = ServerStorage.FindFirstChild('Prefabs') as Folder | undefined;
 		if (!prefabsFolder) {
 			prefabsFolder = new Instance('Folder');
 			prefabsFolder.Name = 'Prefabs';
-			prefabsFolder.Parent = serverStorage;
+			prefabsFolder.Parent = ServerStorage;
 		}
 
 		// Only setup watch if we haven't already
@@ -130,7 +130,7 @@ class PrefabServiceClass {
 		}
 
 		try {
-			const moduleResult = require(infoModule as ModuleScript) as { prefab?: PrefabInfo };
+			const moduleResult = require(infoModule) as { prefab?: PrefabInfo };
 			const prefabInfo = moduleResult.prefab;
 
 			if (prefabInfo?.Name) {
@@ -139,8 +139,11 @@ class PrefabServiceClass {
 					tooltip: prefabInfo.Tooltip || '',
 					model,
 					info: prefabInfo,
-					addedCallback: prefabInfo.AddedCallback,
+					AddedCallback: prefabInfo.AddedCallback,
 				};
+
+				print(`Loaded prefab: ${prefabInfo.Name}`);
+				print(`Prefab uses callback: ${!!prefabInfo.AddedCallback}`);
 
 				this.prefabs.set(prefabInfo.Name, loadedPrefab);
 			}

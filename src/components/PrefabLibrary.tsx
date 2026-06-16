@@ -1,47 +1,39 @@
-import React, { useState, useEffect, useRef } from "@rbxts/react";
-import { Workspace, RunService } from "@rbxts/services";
-import { LoadedPrefab } from "../services/PrefabService";
-import { PrefabCard } from "./PrefabCard";
-import { KeyboardHints } from "./KeyboardHints";
-import { Input } from "ui/components/Input";
-import { ScrollArea } from "ui/components/ScrollArea";
-import { UITheme } from "ui/theme";
+import React, { useEffect, useState } from '@rbxts/react';
+import { Workspace } from '@rbxts/services';
+import type { LoadedPrefab } from 'services/PrefabService';
+import { Input } from 'ui/components/Input';
+import { ScrollArea } from 'ui/components/ScrollArea';
+import { UITheme } from 'ui/theme';
+import { KeyboardHints } from './KeyboardHints';
+import { PrefabCard } from './PrefabCard';
 
 export function PrefabLibrary({
+	mouse,
 	prefabs,
 	onSelectPrefab,
 	isCreatingPrefab,
 	onToggleCreatePrefab,
 	onCreatePrefab,
 }: {
+	mouse: Mouse;
 	prefabs: LoadedPrefab[];
 	onSelectPrefab: (prefab: LoadedPrefab) => void;
 	isCreatingPrefab: boolean;
 	onToggleCreatePrefab: (creating: boolean) => void;
 	onCreatePrefab: (selectedModel: Model, prefabName: string) => Promise<void>;
 }) {
-	const [searchQuery, setSearchQuery] = useState("");
+	const [searchQuery, setSearchQuery] = useState('');
 	const [selectedModel, setSelectedModel] = useState<Model | undefined>();
-	const [prefabName, setPrefabName] = useState("");
+	const [prefabName, setPrefabName] = useState('');
 	const [isSelectingModel, setIsSelectingModel] = useState(false);
-	const selectionConnection = useRef<RBXScriptConnection | undefined>();
 
 	useEffect(() => {
 		if (isSelectingModel && isCreatingPrefab) {
 			// Listen for Descendant changes to detect model selection from workspace
 			// This is a workaround since we can't directly access Selection service
 			// Users can also manually select by clicking
-			
-			const onDescendantAdded = (instance: Instance) => {
-				// When the user selects in explorer, we can detect it
-				if (instance.IsA("Model")) {
-					setSelectedModel(instance as Model);
-					setIsSelectingModel(false);
-				}
-			};
 
 			// Create a better approach: listen to mouse position
-			const mouse = plugin.GetMouse();
 			let mouseConnection: RBXScriptConnection | undefined;
 
 			mouseConnection = mouse.Move.Connect(() => {
@@ -49,12 +41,8 @@ export function PrefabLibrary({
 				if (target) {
 					let model = target.Parent;
 					// Walk up until we find a Model or reach workspace
-					while (model && model !== Workspace && !model.IsA("Model")) {
-						model = model.Parent;
-					}
-					if (model && model !== Workspace && model.IsA("Model")) {
-						setSelectedModel(model as Model);
-					}
+					while (model && model !== Workspace && !model.IsA('Model')) model = model.Parent;
+					if (model && model !== Workspace && model.IsA('Model')) setSelectedModel(model as Model);
 				}
 			});
 
@@ -66,14 +54,14 @@ export function PrefabLibrary({
 		}
 	}, [isSelectingModel, isCreatingPrefab]);
 
-	const filteredPrefabs = prefabs.filter((prefab) =>
-		prefab.name.lower().find(searchQuery.lower(), 1, true)[0] !== undefined
+	const filteredPrefabs = prefabs.filter(
+		(prefab) => prefab.name.lower().find(searchQuery.lower(), 1, true)[0] !== undefined
 	);
 
 	const handleStartCreation = () => {
 		onToggleCreatePrefab(true);
 		setSelectedModel(undefined);
-		setPrefabName("");
+		setPrefabName('');
 		setIsSelectingModel(false);
 	};
 
@@ -83,12 +71,12 @@ export function PrefabLibrary({
 
 	const handleConfirmModel = () => {
 		if (!selectedModel) {
-			warn("Please select a model first");
+			warn('Please select a model first');
 			return;
 		}
 
-		if (prefabName === "") {
-			warn("Please enter a prefab name");
+		if (prefabName === '') {
+			warn('Please enter a prefab name');
 			return;
 		}
 
@@ -98,7 +86,7 @@ export function PrefabLibrary({
 	const handleCancelCreation = () => {
 		onToggleCreatePrefab(false);
 		setSelectedModel(undefined);
-		setPrefabName("");
+		setPrefabName('');
 		setIsSelectingModel(false);
 	};
 
@@ -140,7 +128,7 @@ export function PrefabLibrary({
 				/>
 
 				<Input
-					Placeholder="Search prefabs..."
+					Placeholder='Search prefabs...'
 					Value={searchQuery}
 					onChange={setSearchQuery}
 					Size={new UDim2(1, -100, 1, 0)}
@@ -153,7 +141,7 @@ export function PrefabLibrary({
 					BorderSizePixel={0}
 					Font={Enum.Font.Unknown}
 					FontFace={UITheme.fonts.regular}
-					Text="+ Add"
+					Text='+ Add'
 					TextColor3={Color3.fromRGB(255, 255, 255)}
 					TextSize={12}
 					LayoutOrder={1}
@@ -193,7 +181,7 @@ export function PrefabLibrary({
 						BackgroundTransparency={1}
 						Font={Enum.Font.Unknown}
 						FontFace={UITheme.fonts.bold}
-						Text="Create New Prefab"
+						Text='Create New Prefab'
 						TextColor3={UITheme.colors.text}
 						TextSize={16}
 						TextXAlignment={Enum.TextXAlignment.Left}
@@ -208,7 +196,7 @@ export function PrefabLibrary({
 						FontFace={UITheme.fonts.regular}
 						Text={
 							isSelectingModel
-								? "Hover over a model in the workspace to select it, or click the Cancel button to stop."
+								? 'Hover over a model in the workspace to select it, or click the Cancel button to stop.'
 								: "1. Enter a prefab name\n2. Click 'Select Model' to choose from workspace\n3. Click Create to add the prefab.info script"
 						}
 						TextColor3={isSelectingModel ? UITheme.colors.warning : UITheme.colors.textMuted}
@@ -220,7 +208,7 @@ export function PrefabLibrary({
 					/>
 
 					<Input
-						Placeholder="Prefab name..."
+						Placeholder='Prefab name...'
 						Value={prefabName}
 						onChange={setPrefabName}
 						Size={new UDim2(1, 0, 0, 36)}
@@ -233,7 +221,7 @@ export function PrefabLibrary({
 						BorderSizePixel={0}
 						Font={Enum.Font.Unknown}
 						FontFace={UITheme.fonts.regular}
-						Text={isSelectingModel ? "Cancel Selection" : "Select Model"}
+						Text={isSelectingModel ? 'Cancel Selection' : 'Select Model'}
 						TextColor3={Color3.fromRGB(255, 255, 255)}
 						TextSize={12}
 						LayoutOrder={3}
@@ -255,19 +243,14 @@ export function PrefabLibrary({
 						BackgroundTransparency={1}
 						Font={Enum.Font.Unknown}
 						FontFace={UITheme.fonts.regular}
-						Text={selectedModel ? `Selected: ${selectedModel.Name}` : "No model selected"}
+						Text={selectedModel ? `Selected: ${selectedModel.Name}` : 'No model selected'}
 						TextColor3={selectedModel ? UITheme.colors.success : UITheme.colors.textMuted}
 						TextSize={12}
 						TextXAlignment={Enum.TextXAlignment.Left}
 						LayoutOrder={4}
 					/>
 
-					<frame
-						Size={new UDim2(1, 0, 0, 36)}
-						BackgroundTransparency={1}
-						BorderSizePixel={0}
-						LayoutOrder={5}
-					>
+					<frame Size={new UDim2(1, 0, 0, 36)} BackgroundTransparency={1} BorderSizePixel={0} LayoutOrder={5}>
 						<uilistlayout
 							FillDirection={Enum.FillDirection.Horizontal}
 							HorizontalAlignment={Enum.HorizontalAlignment.Right}
@@ -283,7 +266,7 @@ export function PrefabLibrary({
 							BorderSizePixel={0}
 							Font={Enum.Font.Unknown}
 							FontFace={UITheme.fonts.regular}
-							Text="Cancel"
+							Text='Cancel'
 							TextColor3={Color3.fromRGB(255, 255, 255)}
 							TextSize={12}
 							LayoutOrder={0}
@@ -297,13 +280,13 @@ export function PrefabLibrary({
 						<textbutton
 							Size={new UDim2(0, 100, 1, 0)}
 							BackgroundColor3={
-								selectedModel && prefabName !== "" ? UITheme.colors.accent : UITheme.colors.stroke
+								selectedModel && prefabName !== '' ? UITheme.colors.accent : UITheme.colors.stroke
 							}
 							BackgroundTransparency={0}
 							BorderSizePixel={0}
 							Font={Enum.Font.Unknown}
 							FontFace={UITheme.fonts.regular}
-							Text="Create"
+							Text='Create'
 							TextColor3={Color3.fromRGB(255, 255, 255)}
 							TextSize={12}
 							LayoutOrder={1}
@@ -355,7 +338,7 @@ export function PrefabLibrary({
 									BackgroundTransparency={1}
 									Font={Enum.Font.Unknown}
 									FontFace={UITheme.fonts.regular}
-									Text="No prefabs found"
+									Text='No prefabs found'
 									TextColor3={UITheme.colors.textMuted}
 									TextSize={14}
 									TextXAlignment={Enum.TextXAlignment.Center}

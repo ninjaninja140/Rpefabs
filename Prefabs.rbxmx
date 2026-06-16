@@ -10,13 +10,13 @@ local ReactRoblox = TS.import(script, script, "include", "node_modules", "@rbxts
 local PrefabsApp = TS.import(script, script, "components", "PrefabsApp").PrefabsApp
 local PrefabService = TS.import(script, script, "services", "PrefabService").PrefabService
 local toolbar = plugin:CreateToolbar("Prefabs")
-local button = toolbar:CreateButton("Open Prefabs", "", "rbxasset://textures/Cursor.png")
+local button = toolbar:CreateButton("Open Prefabs", "", "rbxasset://textures/ArrowCursor.png")
 local dockWidget
 local root
 button.Click:Connect(function()
 	if not dockWidget then
-		dockWidget = plugin:CreateDockWidgetPluginGuiAsync("PrefabsWindow", DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Left, true, false, 300, 400, 300, 400))
-		dockWidget.Name = "Prefabs"
+		dockWidget = plugin:CreateDockWidgetPluginGuiAsync("Prefabs Window", DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Left, true, false, 300, 400, 300, 400))
+		dockWidget.Title = "Prefabs Window"
 		local container = Instance.new("Frame")
 		container.Size = UDim2.fromScale(1, 1)
 		container.BackgroundTransparency = 0
@@ -118,15 +118,83 @@ local _react = TS.import(script, script.Parent.Parent, "include", "node_modules"
 local React = _react
 local useEffect = _react.useEffect
 local useState = _react.useState
+local _services = TS.import(script, script.Parent.Parent, "include", "node_modules", "@rbxts", "services")
+local RunService = _services.RunService
+local UserInputService = _services.UserInputService
+local Workspace = _services.Workspace
 local Button = TS.import(script, script.Parent.Parent, "ui", "components", "Button").Button
 local Input = TS.import(script, script.Parent.Parent, "ui", "components", "Input").Input
 local UITheme = TS.import(script, script.Parent.Parent, "ui", "theme").UITheme
 local _PlacementSystem = TS.import(script, script.Parent.Parent, "services", "PlacementSystem")
+local PlacementMode = _PlacementSystem.PlacementMode
 local PlacementSystem = _PlacementSystem.PlacementSystem
 local SnapMode = _PlacementSystem.SnapMode
 local function formatRotation(rot)
 	return tostring(math.floor(rot * 10) / 10)
 end
+-- ---------------------------------------------------------------------------
+-- Mode tab strip
+-- ---------------------------------------------------------------------------
+local function ModeTab(_param)
+	local label = _param.label
+	local active = _param.active
+	local onClick = _param.onClick
+	return React.createElement("textbutton", {
+		Size = UDim2.new(0.5, -2, 1, 0),
+		BackgroundColor3 = if active then UITheme.colors.accent else UITheme.colors.surfaceRaised,
+		BackgroundTransparency = if active then 0.08 else 0.2,
+		BorderSizePixel = 0,
+		Font = Enum.Font.Unknown,
+		FontFace = if active then UITheme.fonts.semiBold else UITheme.fonts.regular,
+		Text = label,
+		TextColor3 = UITheme.colors.text,
+		TextSize = 13,
+		AutoButtonColor = false,
+		Event = {
+			Activated = onClick,
+		},
+	}, React.createElement("uicorner", {
+		CornerRadius = UITheme.radius.sm,
+	}), active and React.createElement("uistroke", {
+		Color = UITheme.colors.accent,
+		Transparency = 0.35,
+		Thickness = 1,
+	}))
+end
+-- ---------------------------------------------------------------------------
+-- Arrow direction button (used in array panel)
+-- ---------------------------------------------------------------------------
+local DIR_LABELS = {
+	px = "+X →",
+	nx = "← -X",
+	pz = "+Z ↓",
+	nz = "↑ -Z",
+}
+local function DirectionButton(_param)
+	local dir = _param.dir
+	local active = _param.active
+	local onClick = _param.onClick
+	return React.createElement("textbutton", {
+		Size = UDim2.new(0.5, -4, 0, 32),
+		BackgroundColor3 = if active then UITheme.colors.warning else UITheme.colors.surfaceRaised,
+		BackgroundTransparency = if active then 0.08 else 0.25,
+		BorderSizePixel = 0,
+		Font = Enum.Font.Unknown,
+		FontFace = if active then UITheme.fonts.semiBold else UITheme.fonts.regular,
+		Text = DIR_LABELS[dir],
+		TextColor3 = if active then Color3.fromRGB(20, 16, 0) else UITheme.colors.text,
+		TextSize = 12,
+		AutoButtonColor = false,
+		Event = {
+			Activated = onClick,
+		},
+	}, React.createElement("uicorner", {
+		CornerRadius = UITheme.radius.sm,
+	}))
+end
+-- ---------------------------------------------------------------------------
+-- Main PlacementUI
+-- ---------------------------------------------------------------------------
 local function PlacementUI(_param)
 	local prefab = _param.prefab
 	local rotation = _param.rotation
@@ -134,60 +202,121 @@ local function PlacementUI(_param)
 	local onCancel = _param.onCancel
 	local onUndo = _param.onUndo
 	local mouse = _param.mouse
+	-- ---- shared state --------------------------------------------------------
 	local canUndo, setCanUndo = useState(false)
 	local snapMode, setSnapMode = useState(PlacementSystem:getSnapMode())
 	local gridSize, setGridSize = useState("1")
 	local placedCount, setPlacedCount = useState(0)
+	local placementMode, setPlacementMode = useState(PlacementSystem:getPlacementMode())
+	-- ---- array mode state ----------------------------------------------------
+	local arrayAnchored, setArrayAnchored = useState(false)
+	local activeDir, setActiveDir = useState()
+	local arrayCount, setArrayCount = useState("5")
+	local arraySpacing, setArraySpacing = useState("0")
+	-- ---- input connections ---------------------------------------------------
 	useEffect(function()
-		-- Update shadow model position when mouse moves
-		local renderConnection = game:GetService("RunService").RenderStepped:Connect(function()
-			-- Get snapped CFrame based on current snap mode
-			local snappedCFrame = PlacementSystem:getSnappedCFrame(mouse.Hit.Position, rotation)
-			PlacementSystem:updateShadowPosition(snappedCFrame)
+		-- Update shadow every frame
+		local renderConn = RunService.RenderStepped:Connect(function()
+			if PlacementSystem:getPlacementMode() == PlacementMode.Array and PlacementSystem:isArrayAnchored() then
+				local shadow = PlacementSystem:getShadowModel()
+				local _result = shadow
+				if _result ~= nil then
+					_result = _result.Parent
+				end
+				if _result then
+					shadow.Parent = nil
+				end
+				return nil
+			end
+			local shadow = PlacementSystem:getShadowModel()
+			if shadow and not shadow.Parent then
+				shadow.Parent = Workspace
+			end
+			local camera = Workspace.CurrentCamera
+			if not camera then
+				return nil
+			end
+			local mousePos = UserInputService:GetMouseLocation()
+			local ray = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
+			local result = Workspace:Raycast(ray.Origin, ray.Direction * 1000)
+			if not result then
+				return nil
+			end
+			PlacementSystem:updateShadowPosition(result.Position)
 		end)
-		-- Handle mouse click to place prefab
-		local inputConnection = game:GetService("UserInputService").InputBegan:Connect(function(input, gameProcessed)
+		-- Mouse / keyboard input
+		local inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			if gameProcessed then
 				return nil
 			end
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			-- ---- keyboard shortcuts ------------------------------------------
+			if input.UserInputType == Enum.UserInputType.Keyboard then
+				if input.KeyCode == Enum.KeyCode.Escape then
+					onCancel()
+					return nil
+				end
+				if input.KeyCode == Enum.KeyCode.Z and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+					onUndo()
+					setCanUndo(PlacementSystem:getPlacedCount() > 1)
+					setPlacedCount(math.max(0, PlacementSystem:getPlacedCount() - 1))
+					return nil
+				end
+			end
+			-- ---- left-click --------------------------------------------------
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+				return nil
+			end
+			local currentMode = PlacementSystem:getPlacementMode()
+			if currentMode == PlacementMode.Single then
+				-- Single: place prefab immediately
 				local placed = PlacementSystem:placePrefab(mouse.Hit.Position, rotation)
 				if placed then
 					setCanUndo(true)
 					setPlacedCount(PlacementSystem:getPlacedCount())
 				end
-			end
-		end)
-		-- Handle keyboard shortcuts
-		local keyInputConnection = game:GetService("UserInputService").InputBegan:Connect(function(input, gameProcessed)
-			if gameProcessed then
-				return nil
-			end
-			if input.KeyCode == Enum.KeyCode.Escape then
-				onCancel()
-			end
-			if input.KeyCode == Enum.KeyCode.Z and game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.LeftControl) then
-				onUndo()
-				setCanUndo(PlacementSystem:getPlacedCount() > 1)
-				setPlacedCount(PlacementSystem:getPlacedCount() - 1)
+			else
+				-- Array mode
+				if not PlacementSystem:isArrayAnchored() then
+					-- First click: anchor the model
+					local placed = PlacementSystem:anchorArrayPlacement(mouse.Hit.Position, rotation)
+					if placed then
+						setCanUndo(true)
+						setArrayAnchored(true)
+						setPlacedCount(PlacementSystem:getPlacedCount())
+					end
+				end
+				-- Subsequent clicks on arrows are handled by the arrow buttons in the UI
 			end
 		end)
 		return function()
-			renderConnection:Disconnect()
-			inputConnection:Disconnect()
-			keyInputConnection:Disconnect()
+			renderConn:Disconnect()
+			inputConn:Disconnect()
 		end
-	end, { rotation })
+	end, { rotation, placementMode })
+	-- ---- keep array preview live when direction / count changes --------------
+	useEffect(function()
+		if placementMode ~= PlacementMode.Array or not arrayAnchored or not activeDir then
+			PlacementSystem:clearArrayPreview()
+			return nil
+		end
+		local n = tonumber(arrayCount)
+		if n ~= nil and n > 0 then
+			PlacementSystem:previewArrayExtension(activeDir, math.floor(n))
+		else
+			PlacementSystem:clearArrayPreview()
+		end
+	end, { activeDir, arrayCount, arrayAnchored, placementMode })
+	-- ---- handlers ------------------------------------------------------------
 	local handleRotationLeft = function()
-		onRotationChange((rotation - 2.5 + 360) % 360)
+		return onRotationChange((rotation - 2.5 + 360) % 360)
 	end
 	local handleRotationRight = function()
-		onRotationChange((rotation + 2.5) % 360)
+		return onRotationChange((rotation + 2.5) % 360)
 	end
-	local handleRotationSliderChange = function(value)
-		local numValue = tonumber(value)
-		if numValue ~= nil and numValue >= 0 and numValue <= 360 then
-			onRotationChange(numValue)
+	local handleRotationInput = function(value)
+		local n = tonumber(value)
+		if n ~= nil and n >= 0 and n <= 360 then
+			onRotationChange(n)
 		end
 	end
 	local handleSnapModeChange = function(mode)
@@ -196,15 +325,53 @@ local function PlacementUI(_param)
 	end
 	local handleGridSizeChange = function(value)
 		setGridSize(value)
-		local size = tonumber(value)
-		local _condition = size
+		local n = tonumber(value)
+		local _condition = n
 		if _condition ~= 0 and _condition == _condition and _condition then
-			_condition = size > 0
+			_condition = n > 0
 		end
 		if _condition ~= 0 and _condition == _condition and _condition then
-			PlacementSystem:setGridSize(size)
+			PlacementSystem:setGridSize(n)
 		end
 	end
+	local handleModeSwitch = function(mode)
+		PlacementSystem:setPlacementMode(mode)
+		setPlacementMode(mode)
+		setArrayAnchored(false)
+		setActiveDir(nil)
+		PlacementSystem:clearArrayState()
+	end
+	local handleSpacingChange = function(value)
+		setArraySpacing(value)
+		local n = tonumber(value)
+		if n ~= nil then
+			PlacementSystem:setArraySpacing(n)
+		end
+	end
+	local handleDirSelect = function(dir)
+		setActiveDir(function(prev)
+			return if prev == dir then nil else dir
+		end)
+	end
+	local handleCommitArray = function()
+		if not activeDir then
+			return nil
+		end
+		local n = tonumber(arrayCount)
+		if not (n ~= 0 and n == n and n) or n <= 0 then
+			return nil
+		end
+		PlacementSystem:commitArrayExtension(activeDir, math.floor(n))
+		setPlacedCount(PlacementSystem:getPlacedCount())
+		setCanUndo(true)
+		setActiveDir(nil)
+	end
+	local handleResetAnchor = function()
+		PlacementSystem:clearArrayState()
+		setArrayAnchored(false)
+		setActiveDir(nil)
+	end
+	-- ---- render --------------------------------------------------------------
 	return React.createElement("frame", {
 		Size = UDim2.new(1, 0, 1, 0),
 		BackgroundColor3 = UITheme.colors.surface,
@@ -217,7 +384,7 @@ local function PlacementUI(_param)
 		Padding = UDim.new(0, 0),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}), React.createElement("frame", {
-		Size = UDim2.new(1, 0, 0, 80),
+		Size = UDim2.new(1, 0, 0, 72),
 		BackgroundColor3 = UITheme.colors.surfaceRaised,
 		BackgroundTransparency = 0.1,
 		BorderSizePixel = 0,
@@ -229,9 +396,7 @@ local function PlacementUI(_param)
 		PaddingRight = UDim.new(0, 12),
 	}), React.createElement("uilistlayout", {
 		FillDirection = Enum.FillDirection.Vertical,
-		HorizontalAlignment = Enum.HorizontalAlignment.Left,
-		VerticalAlignment = Enum.VerticalAlignment.Top,
-		Padding = UDim.new(0, 6),
+		Padding = UDim.new(0, 4),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}), React.createElement("textlabel", {
 		Size = UDim2.new(1, 0, 0, 20),
@@ -240,67 +405,79 @@ local function PlacementUI(_param)
 		FontFace = UITheme.fonts.semiBold,
 		Text = `Placing: {prefab.name}`,
 		TextColor3 = UITheme.colors.text,
-		TextSize = 16,
+		TextSize = 15,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		TextYAlignment = Enum.TextYAlignment.Center,
 	}), React.createElement("textlabel", {
-		Size = UDim2.new(1, 0, 0, 16),
+		Size = UDim2.new(1, 0, 0, 14),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Unknown,
 		FontFace = UITheme.fonts.regular,
-		Text = `Placed: {placedCount} prefab{if placedCount ~= 1 then "s" else ""}`,
+		Text = `{placedCount} prefab{if placedCount ~= 1 then "s" else ""} placed`,
 		TextColor3 = UITheme.colors.textMuted,
-		TextSize = 12,
+		TextSize = 11,
 		TextXAlignment = Enum.TextXAlignment.Left,
 	})), React.createElement("frame", {
-		Size = UDim2.new(1, 0, 0, 240),
+		Size = UDim2.new(1, 0, 0, 40),
 		BackgroundColor3 = UITheme.colors.surface,
-		BackgroundTransparency = 0.2,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		LayoutOrder = 1,
 	}, React.createElement("uipadding", {
-		PaddingTop = UDim.new(0, 12),
-		PaddingBottom = UDim.new(0, 12),
+		PaddingTop = UDim.new(0, 6),
+		PaddingBottom = UDim.new(0, 6),
+		PaddingLeft = UDim.new(0, 10),
+		PaddingRight = UDim.new(0, 10),
+	}), React.createElement("uilistlayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}), React.createElement(ModeTab, {
+		label = "Single",
+		active = placementMode == PlacementMode.Single,
+		onClick = function()
+			return handleModeSwitch(PlacementMode.Single)
+		end,
+	}), React.createElement(ModeTab, {
+		label = "Array",
+		active = placementMode == PlacementMode.Array,
+		onClick = function()
+			return handleModeSwitch(PlacementMode.Array)
+		end,
+	})), React.createElement("frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = UITheme.colors.surface,
+		BackgroundTransparency = 0.2,
+		BorderSizePixel = 0,
+		LayoutOrder = 2,
+	}, React.createElement("uipadding", {
+		PaddingTop = UDim.new(0, 10),
+		PaddingBottom = UDim.new(0, 10),
 		PaddingLeft = UDim.new(0, 12),
 		PaddingRight = UDim.new(0, 12),
 	}), React.createElement("uilistlayout", {
 		FillDirection = Enum.FillDirection.Vertical,
-		HorizontalAlignment = Enum.HorizontalAlignment.Left,
-		VerticalAlignment = Enum.VerticalAlignment.Top,
 		Padding = UDim.new(0, 8),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}), React.createElement("textlabel", {
-		Size = UDim2.new(1, 0, 0, 20),
+		Size = UDim2.new(1, 0, 0, 16),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Unknown,
-		FontFace = UITheme.fonts.regular,
-		Text = `Rotation: {formatRotation(rotation)}°`,
-		TextColor3 = UITheme.colors.text,
-		TextSize = 14,
+		FontFace = UITheme.fonts.semiBold,
+		Text = "Rotation",
+		TextColor3 = UITheme.colors.textMuted,
+		TextSize = 11,
 		TextXAlignment = Enum.TextXAlignment.Left,
-	}), React.createElement("frame", {
-		Size = UDim2.new(1, 0, 0, 48),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-	}, React.createElement("uilistlayout", {
-		FillDirection = Enum.FillDirection.Vertical,
-		HorizontalAlignment = Enum.HorizontalAlignment.Left,
-		VerticalAlignment = Enum.VerticalAlignment.Center,
-		Padding = UDim.new(0, 6),
-		SortOrder = Enum.SortOrder.LayoutOrder,
 	}), React.createElement("frame", {
 		Size = UDim2.new(1, 0, 0, 28),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		LayoutOrder = 0,
 	}, React.createElement("uilistlayout", {
 		FillDirection = Enum.FillDirection.Horizontal,
-		HorizontalAlignment = Enum.HorizontalAlignment.Left,
-		VerticalAlignment = Enum.VerticalAlignment.Center,
-		Padding = UDim.new(0, 8),
+		Padding = UDim.new(0, 6),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}), React.createElement("textbutton", {
-		Size = UDim2.new(0, 32, 1, 0),
+		Size = UDim2.new(0, 28, 1, 0),
 		BackgroundColor3 = UITheme.colors.surfaceRaised,
 		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
@@ -310,11 +487,12 @@ local function PlacementUI(_param)
 		TextColor3 = UITheme.colors.text,
 		TextSize = 14,
 		LayoutOrder = 0,
+		AutoButtonColor = false,
 		Event = {
 			Activated = handleRotationLeft,
 		},
 	}, React.createElement("uicorner", {
-		CornerRadius = UDim.new(0, 4),
+		CornerRadius = UITheme.radius.sm,
 	})), React.createElement("textbox", {
 		Size = UDim2.new(1, -80, 1, 0),
 		BackgroundColor3 = UITheme.colors.surfaceRaised,
@@ -322,36 +500,28 @@ local function PlacementUI(_param)
 		BorderSizePixel = 0,
 		Font = Enum.Font.Unknown,
 		FontFace = UITheme.fonts.regular,
-		Text = formatRotation(rotation),
+		Text = `{formatRotation(rotation)}°`,
 		TextColor3 = UITheme.colors.text,
 		TextSize = 12,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		ClearTextOnFocus = false,
 		LayoutOrder = 1,
-		Event = {
-			FocusLost = function()
-				-- Keep the current value on focus loss
-			end,
-		},
 		Change = {
 			Text = function(rbx)
-				local _condition = rbx ~= nil
+				local _rbx = rbx
+				local _condition = typeof(_rbx) == "Instance"
 				if _condition then
-					local _rbx = rbx
-					_condition = typeof(_rbx) == "Instance"
-					if _condition then
-						_condition = rbx:IsA("TextBox")
-					end
+					_condition = rbx:IsA("TextBox")
 				end
 				if _condition then
-					handleRotationSliderChange(rbx.Text)
+					handleRotationInput((string.gsub(rbx.Text, "°", "")))
 				end
 			end,
 		},
 	}, React.createElement("uicorner", {
-		CornerRadius = UDim.new(0, 4),
+		CornerRadius = UITheme.radius.sm,
 	})), React.createElement("textbutton", {
-		Size = UDim2.new(0, 32, 1, 0),
+		Size = UDim2.new(0, 28, 1, 0),
 		BackgroundColor3 = UITheme.colors.surfaceRaised,
 		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
@@ -361,40 +531,37 @@ local function PlacementUI(_param)
 		TextColor3 = UITheme.colors.text,
 		TextSize = 14,
 		LayoutOrder = 2,
+		AutoButtonColor = false,
 		Event = {
 			Activated = handleRotationRight,
 		},
 	}, React.createElement("uicorner", {
-		CornerRadius = UDim.new(0, 4),
+		CornerRadius = UITheme.radius.sm,
 	}))), React.createElement("textlabel", {
-		Size = UDim2.new(1, 0, 0, 14),
+		Size = UDim2.new(1, 0, 0, 12),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Unknown,
 		FontFace = UITheme.fonts.regular,
-		Text = "Increments: ±2.5°",
+		Text = "±2.5° per click",
+		TextColor3 = UITheme.colors.textMuted,
+		TextSize = 10,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}), React.createElement("textlabel", {
+		Size = UDim2.new(1, 0, 0, 16),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Unknown,
+		FontFace = UITheme.fonts.semiBold,
+		Text = "Snap",
 		TextColor3 = UITheme.colors.textMuted,
 		TextSize = 11,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		LayoutOrder = 1,
-	})), React.createElement("textlabel", {
-		Size = UDim2.new(1, 0, 0, 20),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.Unknown,
-		FontFace = UITheme.fonts.regular,
-		Text = `Snap Mode: {snapMode}`,
-		TextColor3 = UITheme.colors.text,
-		TextSize = 14,
-		TextXAlignment = Enum.TextXAlignment.Left,
 	}), React.createElement("frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, 28),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 	}, React.createElement("uilistlayout", {
 		FillDirection = Enum.FillDirection.Horizontal,
-		HorizontalAlignment = Enum.HorizontalAlignment.Left,
-		VerticalAlignment = Enum.VerticalAlignment.Center,
-		Padding = UDim.new(0, 8),
+		Padding = UDim.new(0, 6),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}), React.createElement(Button, {
 		Text = "None",
@@ -421,33 +588,210 @@ local function PlacementUI(_param)
 		end,
 		LayoutOrder = 2,
 	})), snapMode == SnapMode.Grid and (React.createElement(React.Fragment, nil, React.createElement("textlabel", {
-		Size = UDim2.new(1, 0, 0, 20),
+		Size = UDim2.new(1, 0, 0, 14),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Unknown,
 		FontFace = UITheme.fonts.regular,
-		Text = "Grid Size:",
-		TextColor3 = UITheme.colors.text,
-		TextSize = 12,
+		Text = "Grid size (studs)",
+		TextColor3 = UITheme.colors.textMuted,
+		TextSize = 11,
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}), React.createElement(Input, {
 		Value = gridSize,
 		onChange = handleGridSizeChange,
-		Placeholder = "Grid size...",
-		Size = UDim2.new(0.5, -4, 0, 30),
-	})))), React.createElement("frame", {
-		Size = UDim2.new(1, 0, 1, -320),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		LayoutOrder = 2,
-	}), React.createElement("frame", {
-		Size = UDim2.new(1, 0, 0, 60),
+		Placeholder = "e.g. 4",
+		Size = UDim2.new(0.5, -4, 0, 28),
+	})))), placementMode == PlacementMode.Array and (React.createElement("frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = UITheme.colors.surface,
-		BackgroundTransparency = 0.2,
+		BackgroundTransparency = 0.05,
 		BorderSizePixel = 0,
 		LayoutOrder = 3,
-	}, React.createElement("uipadding", {
-		PaddingTop = UDim.new(0, 12),
+	}, React.createElement("uistroke", {
+		Color = UITheme.colors.accent,
+		Transparency = 0.75,
+		Thickness = 1,
+	}), React.createElement("uipadding", {
+		PaddingTop = UDim.new(0, 10),
 		PaddingBottom = UDim.new(0, 12),
+		PaddingLeft = UDim.new(0, 12),
+		PaddingRight = UDim.new(0, 12),
+	}), React.createElement("uilistlayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}), React.createElement("textlabel", {
+		Size = UDim2.new(1, 0, 0, 16),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Unknown,
+		FontFace = UITheme.fonts.semiBold,
+		Text = "Array Placement",
+		TextColor3 = UITheme.colors.textMuted,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}), React.createElement("textlabel", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Unknown,
+		FontFace = UITheme.fonts.regular,
+		Text = if not arrayAnchored then "Click in the viewport to place the anchor prefab, then use the direction buttons below to extend the array." else "Anchor placed. Pick a direction, set the count, then click Place.",
+		TextColor3 = if arrayAnchored then UITheme.colors.success else UITheme.colors.textMuted,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextWrapped = true,
+	}), arrayAnchored and (React.createElement(React.Fragment, nil, React.createElement("textlabel", {
+		Size = UDim2.new(1, 0, 0, 14),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Unknown,
+		FontFace = UITheme.fonts.semiBold,
+		Text = "Direction",
+		TextColor3 = UITheme.colors.textMuted,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}), React.createElement("frame", {
+		Size = UDim2.new(1, 0, 0, 70),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, React.createElement("uilistlayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}), React.createElement("frame", {
+		Size = UDim2.new(1, 0, 0, 32),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, React.createElement("uilistlayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}), React.createElement(DirectionButton, {
+		dir = "px",
+		active = activeDir == "px",
+		onClick = function()
+			return handleDirSelect("px")
+		end,
+	}), React.createElement(DirectionButton, {
+		dir = "nx",
+		active = activeDir == "nx",
+		onClick = function()
+			return handleDirSelect("nx")
+		end,
+	})), React.createElement("frame", {
+		Size = UDim2.new(1, 0, 0, 32),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, React.createElement("uilistlayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}), React.createElement(DirectionButton, {
+		dir = "pz",
+		active = activeDir == "pz",
+		onClick = function()
+			return handleDirSelect("pz")
+		end,
+	}), React.createElement(DirectionButton, {
+		dir = "nz",
+		active = activeDir == "nz",
+		onClick = function()
+			return handleDirSelect("nz")
+		end,
+	}))), React.createElement("frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, React.createElement("uilistlayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 12),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}), React.createElement("frame", {
+		Size = UDim2.new(0.5, -6, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, React.createElement("uilistlayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		Padding = UDim.new(0, 4),
+	}), React.createElement("textlabel", {
+		Size = UDim2.new(1, 0, 0, 14),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Unknown,
+		FontFace = UITheme.fonts.regular,
+		Text = "Count",
+		TextColor3 = UITheme.colors.textMuted,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}), React.createElement(Input, {
+		Value = arrayCount,
+		onChange = setArrayCount,
+		Placeholder = "5",
+		Size = UDim2.new(1, 0, 0, 28),
+	})), React.createElement("frame", {
+		Size = UDim2.new(0.5, -6, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, React.createElement("uilistlayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		Padding = UDim.new(0, 4),
+	}), React.createElement("textlabel", {
+		Size = UDim2.new(1, 0, 0, 14),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Unknown,
+		FontFace = UITheme.fonts.regular,
+		Text = "Spacing",
+		TextColor3 = UITheme.colors.textMuted,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}), React.createElement(Input, {
+		Value = arraySpacing,
+		onChange = handleSpacingChange,
+		Placeholder = "0",
+		Size = UDim2.new(1, 0, 0, 28),
+	}))), React.createElement("frame", {
+		Size = UDim2.new(1, 0, 0, 32),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, React.createElement("uilistlayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}), React.createElement(Button, {
+		Text = "Place Array",
+		Variant = if activeDir then "primary" else "secondary",
+		SizeVariant = "sm",
+		Disabled = activeDir == nil,
+		onClick = handleCommitArray,
+		LayoutOrder = 0,
+		Size = UDim2.new(0.6, -4, 1, 0),
+	}), React.createElement(Button, {
+		Text = "Reset Anchor",
+		Variant = "secondary",
+		SizeVariant = "sm",
+		onClick = handleResetAnchor,
+		LayoutOrder = 1,
+		Size = UDim2.new(0.4, -4, 1, 0),
+	})))))), React.createElement("frame", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		LayoutOrder = 4,
+	}), React.createElement("frame", {
+		Size = UDim2.new(1, 0, 0, 52),
+		BackgroundColor3 = UITheme.colors.surface,
+		BackgroundTransparency = 0.1,
+		BorderSizePixel = 0,
+		LayoutOrder = 5,
+	}, React.createElement("uistroke", {
+		Color = UITheme.colors.stroke,
+		Transparency = 0.85,
+		Thickness = 1,
+	}), React.createElement("uipadding", {
+		PaddingTop = UDim.new(0, 10),
+		PaddingBottom = UDim.new(0, 10),
 		PaddingLeft = UDim.new(0, 12),
 		PaddingRight = UDim.new(0, 12),
 	}), React.createElement("uilistlayout", {
@@ -484,9 +828,9 @@ return {
 local TS = require(script.Parent.Parent.include.RuntimeLib)
 local _react = TS.import(script, script.Parent.Parent, "include", "node_modules", "@rbxts", "react")
 local React = _react
-local useState = _react.useState
 local useEffect = _react.useEffect
 local useRef = _react.useRef
+local useState = _react.useState
 local Tooltip = TS.import(script, script.Parent.Parent, "ui", "components", "Tooltip").Tooltip
 local UITheme = TS.import(script, script.Parent.Parent, "ui", "theme").UITheme
 local function PrefabCard(_param)
@@ -557,13 +901,15 @@ local function PrefabCard(_param)
 			Size = UDim2.new(1, 0, 0.7, 0),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-		}, React.createElement("viewportframe", {
+		}, React.createElement("uicorner", {
+			CornerRadius = UITheme.radius.md,
+		}), React.createElement("viewportframe", {
 			ref = viewportRef,
 			Size = UDim2.new(1, 0, 1, 0),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 		})), React.createElement("textlabel", {
-			Size = UDim2.new(1, 0, 0.3, 0),
+			Size = UDim2.new(1, 0, 0.2, 0),
 			Position = UDim2.new(0, 0, 0.7, 0),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
@@ -571,11 +917,10 @@ local function PrefabCard(_param)
 			FontFace = UITheme.fonts.semiBold,
 			Text = prefab.name,
 			TextColor3 = UITheme.colors.text,
-			TextSize = 12,
+			TextSize = 13,
 			TextXAlignment = Enum.TextXAlignment.Center,
 			TextYAlignment = Enum.TextYAlignment.Center,
 			TextWrapped = true,
-			TextScaled = true,
 		})),
 	})
 end
@@ -592,16 +937,16 @@ return {
 local TS = require(script.Parent.Parent.include.RuntimeLib)
 local _react = TS.import(script, script.Parent.Parent, "include", "node_modules", "@rbxts", "react")
 local React = _react
-local useState = _react.useState
 local useEffect = _react.useEffect
-local useRef = _react.useRef
+local useState = _react.useState
 local Workspace = TS.import(script, script.Parent.Parent, "include", "node_modules", "@rbxts", "services").Workspace
-local PrefabCard = TS.import(script, script.Parent, "PrefabCard").PrefabCard
-local KeyboardHints = TS.import(script, script.Parent, "KeyboardHints").KeyboardHints
 local Input = TS.import(script, script.Parent.Parent, "ui", "components", "Input").Input
 local ScrollArea = TS.import(script, script.Parent.Parent, "ui", "components", "ScrollArea").ScrollArea
 local UITheme = TS.import(script, script.Parent.Parent, "ui", "theme").UITheme
+local KeyboardHints = TS.import(script, script.Parent, "KeyboardHints").KeyboardHints
+local PrefabCard = TS.import(script, script.Parent, "PrefabCard").PrefabCard
 local function PrefabLibrary(_param)
+	local mouse = _param.mouse
 	local prefabs = _param.prefabs
 	local onSelectPrefab = _param.onSelectPrefab
 	local isCreatingPrefab = _param.isCreatingPrefab
@@ -611,21 +956,12 @@ local function PrefabLibrary(_param)
 	local selectedModel, setSelectedModel = useState()
 	local prefabName, setPrefabName = useState("")
 	local isSelectingModel, setIsSelectingModel = useState(false)
-	local selectionConnection = useRef()
 	useEffect(function()
 		if isSelectingModel and isCreatingPrefab then
 			-- Listen for Descendant changes to detect model selection from workspace
 			-- This is a workaround since we can't directly access Selection service
 			-- Users can also manually select by clicking
-			local onDescendantAdded = function(instance)
-				-- When the user selects in explorer, we can detect it
-				if instance:IsA("Model") then
-					setSelectedModel(instance)
-					setIsSelectingModel(false)
-				end
-			end
 			-- Create a better approach: listen to mouse position
-			local mouse = plugin:GetMouse()
 			local mouseConnection
 			mouseConnection = mouse.Move:Connect(function()
 				local target = mouse.Target
@@ -995,6 +1331,7 @@ local function PrefabsApp(_param)
 		onUndo = handleUndo,
 		mouse = mouse,
 	})) else (React.createElement(PrefabLibrary, {
+		mouse = mouse,
 		prefabs = prefabs,
 		onSelectPrefab = handlePrefabSelect,
 		isCreatingPrefab = isCreatingPrefab,
@@ -1024,27 +1361,53 @@ local SnapMode = {
 	Grid = "Grid",
 	Face = "Face",
 }
--- Helper function to get or create a PrimaryPart based on bounding box
+local PlacementMode = {
+	Single = "Single",
+	Array = "Array",
+}
+-- ---------------------------------------------------------------------------
+-- Helpers
+-- ---------------------------------------------------------------------------
+--* Ensure a Model has a PrimaryPart so MoveTo / PivotTo work reliably. 
 local function ensurePrimaryPart(model)
-	-- Check if model already has a PrimaryPart - if so, use it
 	if model.PrimaryPart then
 		return nil
 	end
-	-- No BaseParts found, create one using bounding box
 	local cframe, size = model:GetBoundingBox()
 	if size.X == 0 or size.Y == 0 or size.Z == 0 then
 		return nil
 	end
-	local tempPart = Instance.new("Part")
-	tempPart.Name = "__PrimaryPart__"
-	tempPart.Shape = Enum.PartType.Block
-	tempPart.CanCollide = false
-	tempPart.CFrame = cframe
-	tempPart.Size = size
-	tempPart.Transparency = 1
-	tempPart.Parent = model
-	model.PrimaryPart = tempPart
+	local part = Instance.new("Part")
+	part.Name = "__PrimaryPart__"
+	part.Shape = Enum.PartType.Block
+	part.CanCollide = false
+	part.CFrame = cframe
+	part.Size = size
+	part.Transparency = 1
+	part.Parent = model
+	model.PrimaryPart = part
 end
+--[[
+	*
+	 * Return the CFrame the model should be pivoted to so that its bounding-box
+	 * *bottom* sits at `groundY` and its horizontal centre sits at `(x, z)`.
+	 *
+	 * This fixes the "shadow flies toward the camera" bug: previously we called
+	 * MoveTo(mouse.Hit.Position) which moves the PrimaryPart (not the model
+	 * pivot) to that point, causing the whole model to drift when the PrimaryPart
+	 * is not at the geometric centre.
+	 
+]]
+local function groundedCFrame(position, rotation, model)
+	local _, size = model:GetBoundingBox()
+	local halfHeight = size.Y / 2
+	local _cFrame = CFrame.new(position.X, position.Y + halfHeight, position.Z)
+	local _arg0 = CFrame.Angles(0, math.rad(rotation), 0)
+	return _cFrame * _arg0
+end
+-- ---------------------------------------------------------------------------
+-- Placement system
+-- ---------------------------------------------------------------------------
 local PlacementSystemClass
 do
 	PlacementSystemClass = setmetatable({}, {
@@ -1066,27 +1429,26 @@ do
 			faceSnapDistance = 5,
 			rotationOffset = 0,
 		}
-		self.placementEnabled = false
+		self.placementMode = PlacementMode.Single
+		self.arrayArrows = {}
+		self.arrayPreviewModels = {}
+		self._arraySpacing = 0
 	end
 	function PlacementSystemClass:setSelectedPrefab(prefab)
 		self.selectedPrefab = prefab
 		if prefab and not self.shadowModel then
 			self:createShadowModel(prefab)
 		elseif not prefab and self.shadowModel then
-			self.shadowModel:Destroy()
-			self.shadowModel = nil
+			self:destroyShadow()
 		end
 	end
 	function PlacementSystemClass:getSelectedPrefab()
 		return self.selectedPrefab
 	end
 	function PlacementSystemClass:createShadowModel(prefab)
-		if self.shadowModel then
-			self.shadowModel:Destroy()
-		end
+		self:destroyShadow()
 		local shadow = prefab.model:Clone()
 		shadow.Name = "Shadow"
-		-- Remove Prefab.info script if present
 		local prefabInfo = shadow:FindFirstChild("Prefab.info")
 		local _result = prefabInfo
 		if _result ~= nil then
@@ -1095,135 +1457,68 @@ do
 		if _result then
 			prefabInfo:Destroy()
 		end
-		-- Ensure PrimaryPart is set for proper movement
 		ensurePrimaryPart(shadow)
-		-- Cache descendants to avoid repeated calls
-		local descendants = shadow:GetDescendants()
-		-- Make shadow semi-transparent and blue - OPTIMIZED: single pass
-		for _, descendant in descendants do
-			if descendant:IsA("BasePart") then
-				local part = descendant
+		for _, desc in shadow:GetDescendants() do
+			if desc:IsA("BasePart") then
+				local part = desc
 				part.Transparency = 0.6
-				part.CanCollide = false
 				part.Color = Color3.fromRGB(100, 150, 255)
+				desc.CanQuery = false
+				desc.CanCollide = false
+				desc.CanTouch = false
 			end
 		end
 		self.shadowModel = shadow
-		self.placementEnabled = true
 	end
-	function PlacementSystemClass:updateShadowPosition(cframe)
+	function PlacementSystemClass:destroyShadow()
 		if self.shadowModel then
-			if not self.shadowModel.Parent then
-				self.shadowModel.Parent = Workspace
-			end
-			-- Use MoveTo to move the whole model to the position, preserving rotation
-			self.shadowModel:MoveTo(cframe.Position)
+			self.shadowModel:Destroy()
+			self.shadowModel = nil
 		end
+	end
+	function PlacementSystemClass:updateShadowPosition(hitPosition)
+		if not self.shadowModel or not self.selectedPrefab then
+			return nil
+		end
+		if not self.shadowModel.Parent then
+			self.shadowModel.Parent = Workspace
+		end
+		local grounded = groundedCFrame(hitPosition, self.snapConfig.rotationOffset, self.selectedPrefab.model)
+		self.shadowModel:PivotTo(grounded)
 	end
 	function PlacementSystemClass:getShadowModel()
 		return self.shadowModel
 	end
-	function PlacementSystemClass:placePrefab(position, rotation)
-		if rotation == nil then
-			rotation = 0
-		end
-		if not self.selectedPrefab then
-			return nil
-		end
-		-- Apply snapping
-		local snappedPosition = self:snapPosition(position, rotation)
-		-- Create new instance
-		local instance = self.selectedPrefab.model:Clone()
-		-- Remove Prefab.info script if present
-		local prefabInfo = instance:FindFirstChild("Prefab.info")
-		local _result = prefabInfo
-		if _result ~= nil then
-			_result = _result:IsA("ModuleScript")
-		end
-		if _result then
-			prefabInfo:Destroy()
-		end
-		-- Remove generated __PrimaryPart__ before placement if it exists
-		local generatedPrimaryPart = instance:FindFirstChild("__PrimaryPart__")
-		if generatedPrimaryPart then
-			generatedPrimaryPart:Destroy()
-		end
-		-- Ensure PrimaryPart exists for proper placement
-		ensurePrimaryPart(instance)
-		-- Position and rotate
-		instance:MoveTo(snappedPosition.Position)
-		if instance.PrimaryPart then
-			instance:PivotTo(snappedPosition)
-		end
-		instance.Parent = Workspace
-		-- Remove the temporary primary part after positioning
-		local tempPrimary = instance:FindFirstChild("__PrimaryPart__")
-		if tempPrimary then
-			tempPrimary:Destroy()
-		end
-		-- Call added callback with correct previousPrefab for this type
-		local prefabName = self.selectedPrefab.name
-		local previousPrefab = self.previousPrefabsByType[prefabName]
-		if self.selectedPrefab.addedCallback then
-			self.selectedPrefab.addedCallback(previousPrefab, instance)
-		end
-		-- Update tracking: now this instance becomes the previous for next placement
-		self.previousPrefabsByType[prefabName] = instance
-		-- Track placed prefab
-		local _placedPrefabs = self.placedPrefabs
-		local _arg0 = {
-			model = instance,
-			prefabName = prefabName,
-		}
-		table.insert(_placedPrefabs, _arg0)
-		return instance
-	end
 	function PlacementSystemClass:snapPosition(position, rotation)
+		local rotCF = CFrame.Angles(0, math.rad(rotation), 0)
 		if self.snapConfig.mode == SnapMode.None then
-			local _cFrame = CFrame.new(position)
-			local _arg0 = CFrame.Angles(0, math.rad(rotation), 0)
-			return _cFrame * _arg0
+			return CFrame.new(position) * rotCF
 		end
 		if self.snapConfig.mode == SnapMode.Grid then
-			local grid = self.snapConfig.gridSize
-			-- Round to nearest grid point
-			local snappedX = math.round(position.X / grid) * grid
-			local snappedY = math.round(position.Y / grid) * grid
-			local snappedZ = math.round(position.Z / grid) * grid
-			local _cFrame = CFrame.new(Vector3.new(snappedX, snappedY, snappedZ))
-			local _arg0 = CFrame.Angles(0, math.rad(rotation), 0)
-			return _cFrame * _arg0
+			local g = self.snapConfig.gridSize
+			local sx = math.round(position.X / g) * g
+			local sy = position.Y
+			local sz = math.round(position.Z / g) * g
+			return CFrame.new(Vector3.new(sx, sy, sz)) * rotCF
 		end
 		if self.snapConfig.mode == SnapMode.Face then
-			-- Face snapping: find nearby part faces and snap to them
-			local nearbyParts = self:findNearbyParts(position, self.snapConfig.faceSnapDistance)
-			if #nearbyParts > 0 then
-				local nearestPart = nearbyParts[1]
-				local snappedPos = self:snapToFace(position, nearestPart)
-				local _cFrame = CFrame.new(snappedPos)
-				local _arg0 = CFrame.Angles(0, math.rad(rotation), 0)
-				return _cFrame * _arg0
+			local nearby = self:findNearbyParts(position, self.snapConfig.faceSnapDistance)
+			if #nearby > 0 then
+				local snapped = self:snapToFace(position, nearby[1])
+				return CFrame.new(snapped) * rotCF
 			end
-			local _cFrame = CFrame.new(position)
-			local _arg0 = CFrame.Angles(0, math.rad(rotation), 0)
-			return _cFrame * _arg0
+			return CFrame.new(position) * rotCF
 		end
-		local _cFrame = CFrame.new(position)
-		local _arg0 = CFrame.Angles(0, math.rad(rotation), 0)
-		return _cFrame * _arg0
+		return CFrame.new(position) * rotCF
 	end
 	function PlacementSystemClass:findNearbyParts(position, distance)
-		-- Use GetPartBoundsInRadius to find nearby parts
-		local parts = Workspace:GetPartBoundsInRadius(position, distance)
-		return parts
+		return Workspace:GetPartBoundsInRadius(position, distance)
 	end
 	function PlacementSystemClass:snapToFace(position, part)
-		-- Get part size and find closest face
 		local partSize = part.Size
 		local partPos = part.Position
 		local _position = position
 		local localPos = partPos - _position
-		-- Determine which face is closest
 		local distances = { math.abs(localPos.X - partSize.X / 2), math.abs(localPos.X + partSize.X / 2), math.abs(localPos.Y - partSize.Y / 2), math.abs(localPos.Y + partSize.Y / 2), math.abs(localPos.Z - partSize.Z / 2), math.abs(localPos.Z + partSize.Z / 2) }
 		local minDist = math.huge
 		local faceIndex = 0
@@ -1233,21 +1528,77 @@ do
 				faceIndex = i
 			end
 		end
-		-- Snap to the closest face
-		local snappedPos = Vector3.new(position.X, position.Y, position.Z)
+		local s = Vector3.new(position.X, position.Y, position.Z)
 		if faceIndex == 0 then
-			return Vector3.new(partPos.X + partSize.X / 2, snappedPos.Y, snappedPos.Z)
-		elseif faceIndex == 1 then
-			return Vector3.new(partPos.X - partSize.X / 2, snappedPos.Y, snappedPos.Z)
-		elseif faceIndex == 2 then
-			return Vector3.new(snappedPos.X, partPos.Y + partSize.Y / 2, snappedPos.Z)
-		elseif faceIndex == 3 then
-			return Vector3.new(snappedPos.X, partPos.Y - partSize.Y / 2, snappedPos.Z)
-		elseif faceIndex == 4 then
-			return Vector3.new(snappedPos.X, snappedPos.Y, partPos.Z + partSize.Z / 2)
-		else
-			return Vector3.new(snappedPos.X, snappedPos.Y, partPos.Z - partSize.Z / 2)
+			return Vector3.new(partPos.X + partSize.X / 2, s.Y, s.Z)
 		end
+		if faceIndex == 1 then
+			return Vector3.new(partPos.X - partSize.X / 2, s.Y, s.Z)
+		end
+		if faceIndex == 2 then
+			return Vector3.new(s.X, partPos.Y + partSize.Y / 2, s.Z)
+		end
+		if faceIndex == 3 then
+			return Vector3.new(s.X, partPos.Y - partSize.Y / 2, s.Z)
+		end
+		if faceIndex == 4 then
+			return Vector3.new(s.X, s.Y, partPos.Z + partSize.Z / 2)
+		end
+		return Vector3.new(s.X, s.Y, partPos.Z - partSize.Z / 2)
+	end
+	function PlacementSystemClass:getSnappedCFrame(position, rotation)
+		return self:snapPosition(position, rotation)
+	end
+	function PlacementSystemClass:placePrefab(position, rotation)
+		if rotation == nil then
+			rotation = 0
+		end
+		if not self.selectedPrefab then
+			return nil
+		end
+		local snappedCF = self:snapPosition(position, rotation)
+		-- Ground the CFrame the same way we ground the shadow
+		local finalCF = groundedCFrame(snappedCF.Position, rotation, self.selectedPrefab.model)
+		return self:spawnPrefab(self.selectedPrefab, finalCF)
+	end
+	function PlacementSystemClass:spawnPrefab(prefab, pivotCF)
+		local instance = prefab.model:Clone()
+		local infoScript = instance:FindFirstChild("Prefab.info")
+		local _result = infoScript
+		if _result ~= nil then
+			_result = _result:IsA("ModuleScript")
+		end
+		if _result then
+			infoScript:Destroy()
+		end
+		-- Remove any generated primary part from the source before ensurePrimaryPart
+		local gen = instance:FindFirstChild("__PrimaryPart__")
+		if gen then
+			gen:Destroy()
+		end
+		ensurePrimaryPart(instance)
+		instance:PivotTo(pivotCF)
+		instance.Parent = Workspace
+		-- Clean up temp primary part
+		local tempPP = instance:FindFirstChild("__PrimaryPart__")
+		if tempPP then
+			tempPP:Destroy()
+		end
+		-- Callbacks
+		local prefabName = prefab.name
+		local previousPrefab = self.previousPrefabsByType[prefabName]
+		if prefab.AddedCallback then
+			print("Running callback...")
+			prefab.AddedCallback(previousPrefab, instance)
+		end
+		self.previousPrefabsByType[prefabName] = instance
+		local _placedPrefabs = self.placedPrefabs
+		local _arg0 = {
+			model = instance,
+			prefabName = prefabName,
+		}
+		table.insert(_placedPrefabs, _arg0)
+		return instance
 	end
 	function PlacementSystemClass:undoLastPlacement()
 		if #self.placedPrefabs == 0 then
@@ -1259,36 +1610,32 @@ do
 		local _result = _exp[_length]
 		_exp[_length] = nil
 		-- ▲ Array.pop ▲
-		local lastPlaced = _result
-		if lastPlaced then
-			local prefabName = lastPlaced.prefabName
-			-- Find the previous prefab of the same type before the one we're undoing
-			local newPrevious = nil
-			for i = #self.placedPrefabs - 1, 0, -1 do
-				if self.placedPrefabs[i + 1].prefabName == prefabName then
-					newPrevious = self.placedPrefabs[i + 1].model
-					break
-				end
-			end
-			-- Update or remove the previous prefab tracking
-			if newPrevious then
-				local _previousPrefabsByType = self.previousPrefabsByType
-				local _newPrevious = newPrevious
-				_previousPrefabsByType[prefabName] = _newPrevious
-			else
-				self.previousPrefabsByType[prefabName] = nil
-			end
-			lastPlaced.model:Destroy()
-			return true
+		local last = _result
+		if not last then
+			return false
 		end
-		return false
+		local _binding = last
+		local prefabName = _binding.prefabName
+		local newPrev
+		for i = #self.placedPrefabs - 1, 0, -1 do
+			if self.placedPrefabs[i + 1].prefabName == prefabName then
+				newPrev = self.placedPrefabs[i + 1].model
+				break
+			end
+		end
+		if newPrev then
+			local _previousPrefabsByType = self.previousPrefabsByType
+			local _newPrev = newPrev
+			_previousPrefabsByType[prefabName] = _newPrev
+		else
+			self.previousPrefabsByType[prefabName] = nil
+		end
+		last.model:Destroy()
+		return true
 	end
 	function PlacementSystemClass:cancelPlacement()
-		self.placementEnabled = false
-		if self.shadowModel then
-			self.shadowModel:Destroy()
-			self.shadowModel = nil
-		end
+		self:destroyShadow()
+		self:clearArrayState()
 		self.selectedPrefab = nil
 	end
 	function PlacementSystemClass:setSnapMode(mode)
@@ -1300,17 +1647,251 @@ do
 	function PlacementSystemClass:setGridSize(size)
 		self.snapConfig.gridSize = math.max(0.1, size)
 	end
-	function PlacementSystemClass:getSnappedCFrame(position, rotation)
-		return self:snapPosition(position, rotation)
-	end
 	function PlacementSystemClass:setRotationOffset(rotation)
 		self.snapConfig.rotationOffset = rotation % 360
 	end
 	function PlacementSystemClass:getRotationOffset()
 		return self.snapConfig.rotationOffset
 	end
-	function PlacementSystemClass:isPlacementEnabled()
-		return self.placementEnabled
+	function PlacementSystemClass:setPlacementMode(mode)
+		if self.placementMode == mode then
+			return nil
+		end
+		self.placementMode = mode
+		if mode == PlacementMode.Single then
+			self:clearArrayState()
+		end
+	end
+	function PlacementSystemClass:getPlacementMode()
+		return self.placementMode
+	end
+	function PlacementSystemClass:setArraySpacing(spacing)
+		self._arraySpacing = math.max(0, spacing)
+	end
+	function PlacementSystemClass:getArraySpacing()
+		return self._arraySpacing
+	end
+	function PlacementSystemClass:anchorArrayPlacement(position, rotation)
+		if not self.selectedPrefab then
+			return nil
+		end
+		-- Clear any previous anchor
+		self:clearArrayState()
+		local snappedCF = self:snapPosition(position, rotation)
+		local groundedCF2 = groundedCFrame(snappedCF.Position, rotation, self.selectedPrefab.model)
+		local _, size = self.selectedPrefab.model:GetBoundingBox()
+		self.arrayAnchor = {
+			cframe = groundedCF2,
+			halfSize = size / 2,
+		}
+		-- Spawn the anchor prefab
+		local placed = self:spawnPrefab(self.selectedPrefab, groundedCF2)
+		-- Spawn direction arrows
+		self:spawnArrayArrows(groundedCF2, size)
+		return placed
+	end
+	function PlacementSystemClass:getArrayAnchor()
+		return self.arrayAnchor
+	end
+	function PlacementSystemClass:spawnArrayArrows(anchorCF, modelSize)
+		self:clearArrows()
+		local dirs = { {
+			id = "px",
+			offset = Vector3.new(modelSize.X / 2 + 2, 0, 0),
+			rot = -90,
+		}, {
+			id = "nx",
+			offset = Vector3.new(-(modelSize.X / 2 + 2), 0, 0),
+			rot = 90,
+		}, {
+			id = "pz",
+			offset = Vector3.new(0, 0, modelSize.Z / 2 + 2),
+			rot = 180,
+		}, {
+			id = "nz",
+			offset = Vector3.new(0, 0, -(modelSize.Z / 2 + 2)),
+			rot = 0,
+		} }
+		for _, dir in dirs do
+			local arrow = self:createArrowModel(dir.id)
+			local _position = anchorCF.Position
+			local _offset = dir.offset
+			local arrowPos = _position + _offset
+			local _cFrame = CFrame.new(arrowPos)
+			local _arg0 = CFrame.Angles(0, math.rad(dir.rot), 0)
+			local arrowCF = _cFrame * _arg0
+			ensurePrimaryPart(arrow)
+			arrow:PivotTo(arrowCF)
+			arrow.Parent = Workspace
+			local _exp = self.arrayArrows
+			table.insert(_exp, arrow)
+		end
+	end
+	function PlacementSystemClass:createArrowModel(id)
+		local model = Instance.new("Model")
+		model.Name = `__ArrayArrow_{id}__`
+		-- Shaft
+		local shaft = Instance.new("Part")
+		shaft.Name = "Shaft"
+		shaft.Shape = Enum.PartType.Block
+		shaft.Size = Vector3.new(0.3, 0.3, 1.5)
+		shaft.CFrame = CFrame.new(0, 0, 0)
+		shaft.Color = Color3.fromRGB(255, 200, 0)
+		shaft.Material = Enum.Material.Neon
+		shaft.CanCollide = false
+		shaft.CastShadow = false
+		shaft.Transparency = 0
+		shaft.Parent = model
+		model.PrimaryPart = shaft
+		-- Head (cone-like wedge)
+		local head = Instance.new("Part")
+		head.Name = "Head"
+		head.Shape = Enum.PartType.Block
+		head.Size = Vector3.new(0.7, 0.7, 0.7)
+		head.CFrame = CFrame.new(0, 0, 1.1)
+		head.Color = Color3.fromRGB(255, 200, 0)
+		head.Material = Enum.Material.Neon
+		head.CanCollide = false
+		head.CastShadow = false
+		head.Transparency = 0
+		head.Parent = model
+		-- Weld head to shaft
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = shaft
+		weld.Part1 = head
+		weld.Parent = shaft
+		return model
+	end
+	function PlacementSystemClass:clearArrows()
+		for _, arrow in self.arrayArrows do
+			if arrow.Parent then
+				arrow:Destroy()
+			end
+		end
+		self.arrayArrows = {}
+	end
+	function PlacementSystemClass:getArrayArrows()
+		return self.arrayArrows
+	end
+	function PlacementSystemClass:previewArrayExtension(direction, count)
+		if not self.arrayAnchor or not self.selectedPrefab or count <= 0 then
+			self:clearArrayPreview()
+			return nil
+		end
+		self:clearArrayPreview()
+		local step = self:getStepVector(direction)
+		local _, size = self.selectedPrefab.model:GetBoundingBox()
+		local stride = if direction == "px" or direction == "nx" then size.X + self._arraySpacing else size.Z + self._arraySpacing
+		do
+			local i = 1
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (i <= count) then
+					break
+				end
+				local _arg0 = stride * i
+				local offset = step * _arg0
+				local pos = self.arrayAnchor.cframe.Position + offset
+				local _cFrame = CFrame.new(pos.X, self.arrayAnchor.cframe.Position.Y, pos.Z)
+				local _arg0_1 = CFrame.Angles(0, math.rad(self.snapConfig.rotationOffset), 0)
+				local cf = _cFrame * _arg0_1
+				local ghost = self.selectedPrefab.model:Clone()
+				local info = ghost:FindFirstChild("Prefab.info")
+				local _result = info
+				if _result ~= nil then
+					_result = _result:IsA("ModuleScript")
+				end
+				if _result then
+					info:Destroy()
+				end
+				ensurePrimaryPart(ghost)
+				for _1, desc in ghost:GetDescendants() do
+					if desc:IsA("BasePart") then
+						local bp = desc
+						bp.Transparency = 0.75
+						bp.CanCollide = false
+						bp.Color = Color3.fromRGB(255, 200, 80)
+					end
+				end
+				ghost:PivotTo(cf)
+				ghost.Parent = Workspace
+				local _exp = self.arrayPreviewModels
+				table.insert(_exp, ghost)
+			end
+		end
+	end
+	function PlacementSystemClass:clearArrayPreview()
+		for _, m in self.arrayPreviewModels do
+			if m.Parent then
+				m:Destroy()
+			end
+		end
+		self.arrayPreviewModels = {}
+	end
+	function PlacementSystemClass:commitArrayExtension(direction, count)
+		if not self.arrayAnchor or not self.selectedPrefab or count <= 0 then
+			return {}
+		end
+		self:clearArrayPreview()
+		local step = self:getStepVector(direction)
+		local _, size = self.selectedPrefab.model:GetBoundingBox()
+		local stride = if direction == "px" or direction == "nx" then size.X + self._arraySpacing else size.Z + self._arraySpacing
+		local placed = {}
+		do
+			local i = 1
+			local _shouldIncrement = false
+			while true do
+				if _shouldIncrement then
+					i += 1
+				else
+					_shouldIncrement = true
+				end
+				if not (i <= count) then
+					break
+				end
+				local _arg0 = stride * i
+				local offset = step * _arg0
+				local pos = self.arrayAnchor.cframe.Position + offset
+				local _cFrame = CFrame.new(pos.X, self.arrayAnchor.cframe.Position.Y, pos.Z)
+				local _arg0_1 = CFrame.Angles(0, math.rad(self.snapConfig.rotationOffset), 0)
+				local cf = _cFrame * _arg0_1
+				local model = self:spawnPrefab(self.selectedPrefab, cf)
+				table.insert(placed, model)
+			end
+		end
+		-- Update anchor arrows to encompass new extent
+		if #placed > 0 then
+			local lastModel = placed[#placed]
+			local lastCF, lastSize = lastModel:GetBoundingBox()
+			-- Extend arrows from new edge
+			self:spawnArrayArrows(self.arrayAnchor.cframe, self.arrayAnchor.halfSize * 2)
+		end
+		return placed
+	end
+	function PlacementSystemClass:getStepVector(direction)
+		if direction == "px" then
+			return Vector3.new(1, 0, 0)
+		end
+		if direction == "nx" then
+			return Vector3.new(-1, 0, 0)
+		end
+		if direction == "pz" then
+			return Vector3.new(0, 0, 1)
+		end
+		return Vector3.new(0, 0, -1)
+	end
+	function PlacementSystemClass:clearArrayState()
+		self:clearArrows()
+		self:clearArrayPreview()
+		self.arrayAnchor = nil
+	end
+	function PlacementSystemClass:isArrayAnchored()
+		return self.arrayAnchor ~= nil
 	end
 	function PlacementSystemClass:getPlacedCount()
 		return #self.placedPrefabs
@@ -1319,12 +1900,13 @@ do
 		for _, entry in self.placedPrefabs do
 			entry.model:Destroy()
 		end
-		table.clear(self.placedPrefabs)
+		self.placedPrefabs = {}
 	end
 end
 local PlacementSystem = PlacementSystemClass.new()
 return {
 	SnapMode = SnapMode,
+	PlacementMode = PlacementMode,
 	PlacementSystem = PlacementSystem,
 }
 ]]></string>
@@ -1335,6 +1917,7 @@ return {
           <string name="Name">PrefabService</string>
           <string name="Source"><![CDATA[-- Compiled with roblox-ts v3.0.0
 local TS = require(script.Parent.Parent.include.RuntimeLib)
+local ServerStorage = TS.import(script, script.Parent.Parent, "include", "node_modules", "@rbxts", "services").ServerStorage
 local PrefabServiceClass
 do
 	PrefabServiceClass = setmetatable({}, {
@@ -1353,13 +1936,12 @@ do
 		self.refreshScheduled = false
 	end
 	function PrefabServiceClass:scanPrefabs()
-		local serverStorage = game:GetService("ServerStorage")
 		-- Ensure Prefabs folder exists
-		local prefabsFolder = serverStorage:FindFirstChild("Prefabs")
+		local prefabsFolder = ServerStorage:FindFirstChild("Prefabs")
 		if not prefabsFolder then
 			prefabsFolder = Instance.new("Folder")
 			prefabsFolder.Name = "Prefabs"
-			prefabsFolder.Parent = serverStorage
+			prefabsFolder.Parent = ServerStorage
 		end
 		-- Only setup watch if we haven't already
 		if not self.prefabsFolder then
@@ -1436,7 +2018,7 @@ do
 		local _exp_1 = self.changeListeners
 		-- ▼ ReadonlyArray.forEach ▼
 		local _callback_1 = function(listener)
-			return listener(updated)
+			listener(updated)
 		end
 		for _k, _v in _exp_1 do
 			_callback_1(_v, _k - 1, _exp_1)
@@ -1468,14 +2050,21 @@ do
 	end
 	function PrefabServiceClass:loadPrefab(model)
 		local infoModule = model:FindFirstChild("Prefab.info")
-		if not infoModule or not infoModule:IsA("ModuleScript") then
+		local _result = infoModule
+		if _result ~= nil then
+			_result = _result:IsA("ModuleScript")
+		end
+		if not _result then
 			return nil
 		end
 		TS.try(function()
 			local moduleResult = require(infoModule)
 			local prefabInfo = moduleResult.prefab
-			local _value = prefabInfo and prefabInfo.Name
-			if _value ~= "" and _value then
+			local _result_1 = prefabInfo
+			if _result_1 ~= nil then
+				_result_1 = _result_1.Name
+			end
+			if _result_1 ~= "" and _result_1 then
 				local _object = {
 					name = prefabInfo.Name,
 				}
@@ -1487,8 +2076,10 @@ do
 				_object[_left] = _condition
 				_object.model = model
 				_object.info = prefabInfo
-				_object.addedCallback = prefabInfo.AddedCallback
+				_object.AddedCallback = prefabInfo.AddedCallback
 				local loadedPrefab = _object
+				print(`Loaded prefab: {prefabInfo.Name}`)
+				print(`Prefab uses callback: {not not prefabInfo.AddedCallback}`)
 				local _prefabs = self.prefabs
 				local _name = prefabInfo.Name
 				_prefabs[_name] = loadedPrefab

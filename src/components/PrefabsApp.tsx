@@ -78,6 +78,7 @@ export function PrefabsApp({ mouse }: { mouse: Mouse }) {
 				/>
 			) : (
 				<PrefabLibrary
+					mouse={mouse}
 					prefabs={prefabs}
 					onSelectPrefab={handlePrefabSelect}
 					isCreatingPrefab={isCreatingPrefab}
