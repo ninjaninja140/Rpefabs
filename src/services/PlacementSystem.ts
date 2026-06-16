@@ -1,5 +1,5 @@
 import { Workspace } from '@rbxts/services';
-import type { LoadedPrefab } from 'services/PrefabService';
+import type { LoadedPrefab, PrefabInfo } from 'services/PrefabService';
 
 export enum SnapMode {
 	None = 'None',
@@ -254,8 +254,15 @@ class PlacementSystemClass {
 	private spawnPrefab(prefab: LoadedPrefab, pivotCF: CFrame): Model {
 		const instance = prefab.model.Clone();
 
-		const infoScript = instance.FindFirstChild('Prefab.info');
-		if (infoScript?.IsA('ModuleScript')) infoScript.Destroy();
+		// Require the module from the CLONE before destroying it
+		const infoScript = instance.FindFirstChild('Prefab.info') as ModuleScript | undefined;
+		let callback: ((previousPrefab: Model | undefined, newPrefab: Model) => void) | undefined;
+
+		if (infoScript?.IsA('ModuleScript')) {
+			const required = require(infoScript) as { prefab?: PrefabInfo };
+			callback = required.prefab?.AddedCallback;
+			infoScript.Destroy();
+		}
 
 		// Remove any generated primary part from the source before ensurePrimaryPart
 		const gen = instance.FindFirstChild('__PrimaryPart__');
@@ -272,11 +279,8 @@ class PlacementSystemClass {
 		// Callbacks
 		const prefabName = prefab.name;
 		const previousPrefab = this.previousPrefabsByType.get(prefabName);
-		const callback = prefab.AddedCallback;
 
 		if (callback) {
-			print(`Running callback for ${prefabName}`);
-
 			task.spawn(() => {
 				try {
 					callback(previousPrefab, instance);
@@ -285,8 +289,8 @@ class PlacementSystemClass {
 				}
 			});
 		}
-		this.previousPrefabsByType.set(prefabName, instance);
 
+		this.previousPrefabsByType.set(prefabName, instance);
 		this.placedPrefabs.push({ model: instance, prefabName });
 		return instance;
 	}

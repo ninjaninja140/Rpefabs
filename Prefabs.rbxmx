@@ -830,7 +830,6 @@ local _react = TS.import(script, script.Parent.Parent, "include", "node_modules"
 local React = _react
 local useEffect = _react.useEffect
 local useRef = _react.useRef
-local useState = _react.useState
 local Tooltip = TS.import(script, script.Parent.Parent, "ui", "components", "Tooltip").Tooltip
 local UITheme = TS.import(script, script.Parent.Parent, "ui", "theme").UITheme
 local function PrefabCard(_param)
@@ -840,7 +839,6 @@ local function PrefabCard(_param)
 	if LayoutOrder == nil then
 		LayoutOrder = 0
 	end
-	local hovered, setHovered = useState(false)
 	local viewportRef = useRef(nil)
 	useEffect(function()
 		if not viewportRef.current then
@@ -876,26 +874,20 @@ local function PrefabCard(_param)
 		DelayMs = 300,
 		Children = React.createElement("textbutton", {
 			Size = UDim2.new(0, 120, 0, 120),
-			BackgroundColor3 = if hovered then UITheme.colors.surfaceRaised else UITheme.colors.surface,
-			BackgroundTransparency = if hovered then 0.05 else 0.2,
+			BackgroundColor3 = UITheme.colors.surfaceRaised,
+			BackgroundTransparency = 0.05,
 			BorderSizePixel = 0,
 			Text = "",
 			AutoButtonColor = false,
 			LayoutOrder = LayoutOrder,
 			Event = {
-				MouseEnter = function()
-					return setHovered(true)
-				end,
-				MouseLeave = function()
-					return setHovered(false)
-				end,
 				MouseButton1Click = onSelect,
 			},
 		}, React.createElement("uicorner", {
 			CornerRadius = UITheme.radius.md,
 		}), React.createElement("uistroke", {
 			Color = UITheme.colors.stroke,
-			Transparency = if hovered then 0.3 else 0.7,
+			Transparency = 0.3,
 			Thickness = 2,
 		}), React.createElement("frame", {
 			Size = UDim2.new(1, 0, 0.7, 0),
@@ -1563,12 +1555,20 @@ do
 	end
 	function PlacementSystemClass:spawnPrefab(prefab, pivotCF)
 		local instance = prefab.model:Clone()
+		-- Require the module from the CLONE before destroying it
 		local infoScript = instance:FindFirstChild("Prefab.info")
+		local callback
 		local _result = infoScript
 		if _result ~= nil then
 			_result = _result:IsA("ModuleScript")
 		end
 		if _result then
+			local required = require(infoScript)
+			local _result_1 = required.prefab
+			if _result_1 ~= nil then
+				_result_1 = _result_1.AddedCallback
+			end
+			callback = _result_1
 			infoScript:Destroy()
 		end
 		-- Remove any generated primary part from the source before ensurePrimaryPart
@@ -1587,9 +1587,14 @@ do
 		-- Callbacks
 		local prefabName = prefab.name
 		local previousPrefab = self.previousPrefabsByType[prefabName]
-		if prefab.AddedCallback then
-			print("Running callback...")
-			prefab.AddedCallback(previousPrefab, instance)
+		if callback then
+			task.spawn(function()
+				TS.try(function()
+					callback(previousPrefab, instance)
+				end, function(err)
+					warn(`Prefab callback error ({prefabName}):`, err)
+				end)
+			end)
 		end
 		self.previousPrefabsByType[prefabName] = instance
 		local _placedPrefabs = self.placedPrefabs
@@ -2076,10 +2081,9 @@ do
 				_object[_left] = _condition
 				_object.model = model
 				_object.info = prefabInfo
-				_object.AddedCallback = prefabInfo.AddedCallback
+				_object.AddedCallback = nil
 				local loadedPrefab = _object
 				print(`Loaded prefab: {prefabInfo.Name}`)
-				print(`Prefab uses callback: {not not prefabInfo.AddedCallback}`)
 				local _prefabs = self.prefabs
 				local _name = prefabInfo.Name
 				_prefabs[_name] = loadedPrefab

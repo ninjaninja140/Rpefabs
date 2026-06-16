@@ -139,12 +139,11 @@ class PrefabServiceClass {
 					tooltip: prefabInfo.Tooltip || '',
 					model,
 					info: prefabInfo,
-					AddedCallback: prefabInfo.AddedCallback,
+					// We don't store the callback from require anymore
+					AddedCallback: undefined,
 				};
 
 				print(`Loaded prefab: ${prefabInfo.Name}`);
-				print(`Prefab uses callback: ${!!prefabInfo.AddedCallback}`);
-
 				this.prefabs.set(prefabInfo.Name, loadedPrefab);
 			}
 		} catch (error) {
