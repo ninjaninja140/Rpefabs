@@ -125,7 +125,6 @@ class PrefabServiceClass {
 					info: prefabInfo,
 				};
 
-				print(`Loaded prefab: ${prefabInfo.Name}`);
 				this.prefabs.set(prefabInfo.Name, loadedPrefab);
 			}
 		} catch (error) {

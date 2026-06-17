@@ -66,20 +66,16 @@ export function PlacementUI({ prefab, onCancel, mouse }: { prefab: LoadedPrefab;
 
 			if (input.UserInputType !== Enum.UserInputType.MouseButton1) return;
 
+			if (input.KeyCode === Enum.KeyCode.Z && UserInputService.IsKeyDown(Enum.KeyCode.LeftControl)) {
+				PlacementSystem.cancelPlacement();
+				onCancel();
+				return;
+			}
+
 			const currentMode = PlacementSystem.getPlacementMode();
 
 			if (currentMode === PlacementMode.Single)
 				PlacementSystem.placePrefab(mouse.Hit.Position, PlacementSystem.getRotationOffset());
-			else {
-				if (!PlacementSystem.isArrayAnchored()) {
-					PlacementSystem.anchorArrayPlacement(mouse.Hit.Position, PlacementSystem.getRotationOffset());
-					setArrayAnchored(true);
-				} else if (activeDirRef.current) {
-					const n = tonumber(arrayCountRef.current) as number | undefined;
-					if (n !== undefined && n > 0)
-						PlacementSystem.commitArrayExtension(activeDirRef.current, math.floor(n));
-				}
-			}
 		});
 
 		return () => {

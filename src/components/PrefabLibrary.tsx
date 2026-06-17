@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from '@rbxts/react';
-import { UserInputService, Workspace } from '@rbxts/services';
+import { Selection, UserInputService, Workspace } from '@rbxts/services';
 import { KeyboardHints } from 'components/KeyboardHints';
 import { PrefabCard } from 'components/PrefabCard';
 import { UITheme } from 'components/theme';
@@ -103,15 +103,18 @@ export function PrefabLibrary({
 			return;
 		}
 
-		const mouseConnection = mouse.Move.Connect(() => {
-			const target = mouse.Target;
-			if (target) {
-				const model = findPrefabAncestor(target);
-				if (model && model !== Workspace && PlacementSystem.canContinueFrom(model))
-					PlacementSystem.highlightModel(model);
-				else PlacementSystem.clearHighlight();
-			} else PlacementSystem.clearHighlight();
-		});
+		const selectionConn = (Selection as Selection & { SelectionChanged: RBXScriptSignal }).SelectionChanged.Connect(
+			() => {
+				const selected = Selection.Get();
+				if (selected.size() === 1) {
+					const object = selected[0];
+					if (object.IsA('Model') && object !== Workspace) {
+						setSelectedModel(object);
+						setIsSelectingModel(false);
+					}
+				}
+			}
+		);
 
 		const inputConnection = UserInputService.InputBegan.Connect((input, gameProcessed) => {
 			if (gameProcessed) return;
@@ -120,22 +123,10 @@ export function PrefabLibrary({
 				setIsSelectingModel(false);
 				return;
 			}
-
-			if (input.UserInputType !== Enum.UserInputType.MouseButton1) return;
-
-			const target = mouse.Target;
-			if (target) {
-				const model = findPrefabAncestor(target);
-
-				if (model && model !== Workspace) {
-					setSelectedModel(model);
-					setIsSelectingModel(false);
-				}
-			}
 		});
 
 		return () => {
-			mouseConnection.Disconnect();
+			selectionConn.Disconnect();
 			inputConnection.Disconnect();
 			PlacementSystem.clearHighlight();
 		};

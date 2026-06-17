@@ -170,6 +170,9 @@ class PlacementSystemClass {
 	private arrayPreviewModels: Model[] = [];
 	private _arraySpacing = 0;
 
+	private ghostPoolReady = false;
+	private ghostBuildScheduled = false;
+
 	private lastPlacedCF: CFrame | undefined;
 
 	getArcConfig(): ArcConfig {
@@ -391,6 +394,8 @@ class PlacementSystemClass {
 			});
 
 		this.previousPrefabsByType.set(prefab.name, instance);
+
+		Selection.Set([instance]);
 		return instance;
 	}
 
@@ -572,67 +577,110 @@ class PlacementSystemClass {
 			this.clearArrayPreview();
 			return;
 		}
-		this.clearArrayPreview();
+
+		// If we need more ghosts, schedule async build and bail — preview updates next call
+		if (count > this.arrayPreviewModels.size()) {
+			if (!this.ghostBuildScheduled) {
+				this.ghostBuildScheduled = true;
+				this.ghostPoolReady = false;
+				this.buildGhostsAsync(count);
+			}
+			return;
+		}
+
+		const size = this.selectedPrefabSize!;
 
 		if (this.arcConfig.enabled && this.arcConfig.angle !== 0) {
-			const size = this.selectedPrefabSize!;
 			let currentCF = this.arrayAnchor.cframe;
-			for (let i = 1; i <= count; i++) {
+			for (let i = 0; i < count; i++) {
 				currentCF = computeNextArcCFrame(currentCF, size, this.arcConfig, direction);
-				const ghost = this.createGhostModel(this.selectedPrefab, currentCF);
-				ghost.Parent = Workspace;
-				this.arrayPreviewModels.push(ghost);
+				const ghost = this.arrayPreviewModels[i];
+				ghost.PivotTo(currentCF);
+				if (!ghost.Parent) ghost.Parent = Workspace;
 			}
 		} else {
 			const step = this.getStepVector(direction);
-			const size = this.selectedPrefabSize!;
 			const stride =
 				direction === 'px' || direction === 'nx' ? size.X + this._arraySpacing : size.Z + this._arraySpacing;
-
 			const anchorRotation = this.arrayAnchor.cframe.sub(this.arrayAnchor.cframe.Position);
 			const rotatedStep = anchorRotation.VectorToWorldSpace(step);
 
-			for (let i = 1; i <= count; i++) {
-				const offset = rotatedStep.mul(stride * i);
+			for (let i = 0; i < count; i++) {
+				const offset = rotatedStep.mul(stride * (i + 1));
 				const pos = this.arrayAnchor.cframe.Position.add(offset);
 				const cf = new CFrame(pos)
 					.mul(anchorRotation)
 					.mul(CFrame.Angles(0, math.rad(this.snapConfig.rotationOffset), 0));
-				const ghost = this.createGhostModel(this.selectedPrefab, cf);
-				ghost.Parent = Workspace;
-				this.arrayPreviewModels.push(ghost);
+				const ghost = this.arrayPreviewModels[i];
+				ghost.PivotTo(cf);
+				if (!ghost.Parent) ghost.Parent = Workspace;
 			}
+		}
+
+		// Hide excess
+		for (let i = count; i < this.arrayPreviewModels.size(); i++) {
+			if (this.arrayPreviewModels[i].Parent) this.arrayPreviewModels[i].Parent = undefined;
 		}
 	}
 
-	private createGhostModel(prefab: LoadedPrefab, cf: CFrame): Model {
+	private buildGhostsAsync(targetCount: number) {
+		const buildNext = () => {
+			if (this.arrayPreviewModels.size() >= targetCount) {
+				this.ghostPoolReady = true;
+				this.ghostBuildScheduled = false;
+				return;
+			}
+
+			const ghost = this.createGhostModel(this.selectedPrefab!);
+			ghost.Parent = undefined;
+			this.arrayPreviewModels.push(ghost);
+
+			if (this.arrayPreviewModels.size() < targetCount) {
+				task.defer(buildNext);
+			} else {
+				this.ghostPoolReady = true;
+				this.ghostBuildScheduled = false;
+			}
+		};
+
+		task.defer(buildNext);
+	}
+
+	private createGhostModel(prefab: LoadedPrefab): Model {
 		const ghost = prefab.model.Clone();
 		const info = ghost.FindFirstChild('Prefab.info');
 		if (info?.IsA('ModuleScript')) info.Destroy();
 		ensurePrimaryPart(ghost);
 
-		const selectionBox = new Instance('SelectionBox');
-		selectionBox.Name = '__PrefabSelectionBox__';
-		selectionBox.Adornee = ghost;
-		selectionBox.Color3 = UITheme.colors.accent;
-		selectionBox.SurfaceColor3 = UITheme.colors.accent;
-		selectionBox.SurfaceTransparency = 0.7;
-		selectionBox.LineThickness = 0.05;
-		selectionBox.Parent = ghost;
+		const box = new Instance('SelectionBox');
+		box.Adornee = ghost;
+		box.Color3 = UITheme.colors.accent;
+		box.SurfaceColor3 = UITheme.colors.accent;
+		box.SurfaceTransparency = 0.7;
+		box.LineThickness = 0.05;
+		box.Parent = ghost;
 
-		for (const desc of ghost.GetDescendants())
+		for (const desc of ghost.GetDescendants()) {
 			if (desc.IsA('BasePart')) {
 				desc.Transparency = 0.55;
 				desc.CanCollide = false;
 			}
+		}
 
 		if (ghost.PrimaryPart) ghost.PrimaryPart.Transparency = 1;
 
-		ghost.PivotTo(cf);
 		return ghost;
 	}
 
 	clearArrayPreview() {
+		for (const m of this.arrayPreviewModels) {
+			if (m.Parent) m.Parent = undefined;
+		}
+	}
+
+	private destroyArrayPreviews() {
+		this.ghostPoolReady = false;
+		this.ghostBuildScheduled = false;
 		for (const m of this.arrayPreviewModels) {
 			if (m.Parent) m.Destroy();
 		}
@@ -644,18 +692,19 @@ class PlacementSystemClass {
 		this.clearArrayPreview();
 
 		const placed: Model[] = [];
+		let lastPlaced: Model;
 
 		if (this.arcConfig.enabled && this.arcConfig.angle !== 0) {
 			const size = this.selectedPrefabSize!;
 			let currentCF = this.arrayAnchor.cframe;
+
 			for (let i = 1; i <= count; i++) {
 				currentCF = computeNextArcCFrame(currentCF, size, this.arcConfig, direction);
 				const m = this.spawnPrefab(this.selectedPrefab, currentCF);
 				placed.push(m);
-				task.wait(0.05);
+				lastPlaced = m;
 			}
 			if (placed.size() > 0) this.lastPlacedCF = currentCF;
-			Selection.Set([this.previousPrefabsByType.get(this.selectedPrefab.name)!]);
 		} else {
 			const step = this.getStepVector(direction);
 			const [, size] = this.selectedPrefab.model.GetBoundingBox();
@@ -673,6 +722,8 @@ class PlacementSystemClass {
 					.mul(anchorRotation)
 					.mul(CFrame.Angles(0, math.rad(this.snapConfig.rotationOffset), 0));
 				const m = this.spawnPrefab(this.selectedPrefab, cf);
+				lastPlaced = m;
+
 				placed.push(m);
 			}
 		}
@@ -697,7 +748,7 @@ class PlacementSystemClass {
 
 	clearArrayState() {
 		this.clearArrows();
-		this.clearArrayPreview();
+		this.destroyArrayPreviews();
 		this.arrayAnchor = undefined;
 	}
 
