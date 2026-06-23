@@ -1,11 +1,9 @@
 {
-	"version": "1.0.0",
-	"main": "index.js",
 	"license": "MIT",
 	"scripts": {
 		"build": "rbxtsc",
 		"watch": "rbxtsc -w",
-		"out": "rk rojo build --output PrefabsPlugin.rbxmx",
+		"out": "rk rojo build --output Rpefabs.rbxmx",
 		"serve": "rk rojo serve serve.project.json"
 	},
 	"devDependencies": {
